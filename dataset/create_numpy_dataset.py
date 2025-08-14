@@ -15,9 +15,9 @@ CONFIG = {
     'theta': None,  # Projection angles, None for auto
     
     # Directory paths
-    'volume_folder': "...",
-    'segmentation_folder': "...",
-    'output_dir': "...",
+    'volume_folder': "/ari/users/nsefercioglu/nifti-poc-data/Volumes",
+    'segmentation_folder': "/ari/users/nsefercioglu/nifti-poc-data/Segmentations",
+    'output_dir': "/ari/users/nsefercioglu/preprocessed_data",
     
     # Output subdirectories
     'low_dose_subdir': "low_dose",
@@ -96,6 +96,7 @@ def simulate_low_dose_ct(image, dose_fraction=CONFIG['dose_fraction'], theta=CON
 
     # Resize back to target size
     reconstruction = resize(reconstruction, CONFIG['target_size'], anti_aliasing=True, preserve_range=True)
+    reconstruction = reconstruction.astype(np.float32)
 
     return reconstruction
 
@@ -164,11 +165,15 @@ for vol_file, seg_file in matched_pairs:
             seg_save_path = os.path.join(seg_slice_dir, f"segmentation_{identifier}_slice_{slice_idx:03d}.npy")
             
             # Save as NumPy arrays
-            np.save(full_dose_save_path, vol_slice_resized)  # Already normalized to [0, 1]
-            np.save(low_dose_save_path, low_dose_slice)      # Already normalized to [0, 1]
-            np.save(seg_save_path, seg_slice_resized)        # Segmentation masks don't need normalization
+            full_dose_final = vol_slice_resized.astype(np.float32)
+            low_dose_final = low_dose_slice.astype(np.float32)
+            seg_final = seg_slice_resized.astype(np.uint8)
             
-            print(f"  Saved resized slice {slice_idx}/{num_slices-1} for {identifier} (full-dose, low-dose, and segmentation)")
+            np.save(full_dose_save_path, full_dose_final)  # normalized [0, 1]
+            np.save(low_dose_save_path, low_dose_final)    # normalized [0, 1]
+            np.save(seg_save_path, seg_final)
+            
+            print(f"  Saved slice {slice_idx}/{num_slices-1} for {identifier}")
         else:
             print(f"  Skipped slice {slice_idx}/{num_slices-1} for {identifier} (all zeros in segmentation)")
 
