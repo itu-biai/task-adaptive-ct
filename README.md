@@ -15,25 +15,26 @@ The project consists of four main components:
 ```
 .
 ├── benchmarks/
-│   ├── benchmarks.py              # Performance evaluation scripts
-│   ├── parallel_benchmarks.py     # Parallel version for faster processing
-│   └── benchmark_results.txt      # Benchmark results
+│   ├── benchmarks.py                   # Performance evaluation scripts
+│   ├── parallel_benchmarks.py          # Parallel version for faster processing
+│   └── benchmark_results.txt           # Benchmark results
 ├── dataset/
-│   ├── create_numpy_dataset.py    # Dataset creation and preprocessing
-│   ├── parallel-numpy-dataset.py  # Parallel dataset creation
-│   └── visualize_samples.py       # Dataset visualization tools
+│   ├── create_numpy_dataset.py         # Dataset creation and preprocessing
+│   ├── parallel-numpy-dataset.py       # Parallel dataset creation
+│   └── visualize_samples.py            # Dataset visualization tools
 ├── inference/
-│   ├── bounding-box.py            # Interactive ROI analysis
-│   ├── segmentation_inference.py  # Comprehensive segmentation evaluation
-│   └── segmentation_task_adaptive.py  # Task-adaptive segmentation inference
+│   ├── bounding-box.py                 # Interactive ROI analysis
+│   ├── segmentation_inference.py       # Comprehensive segmentation evaluation
+│   └── segmentation_task_adaptive.py   # Task-adaptive segmentation inference
+│   └── segmentation_joint_training.py  # Joint training segmentation inference
 ├── models/
-│   ├── train_base_unet.py         # Base U-Net reconstruction model
-│   ├── train_seg_unet.py          # Segmentation U-Net model
-│   ├── train_task_adapted.py      # Task-adaptive reconstruction model
-│   └── joint_training_model.py    # Joint reconstruction and segmentation training
-├── LICENSE                        # GPL v3.0 license
-├── requirements.txt               # Python dependencies
-└── .gitignore                     # Git ignore file
+│   ├── train_base_unet.py              # Base U-Net reconstruction model
+│   ├── train_seg_unet.py               # Segmentation U-Net model
+│   ├── train_task_adapted.py           # Task-adaptive reconstruction model
+│   └── joint_training_model.py         # Joint reconstruction and segmentation training
+├── LICENSE                             # GPL v3.0 license
+├── requirements.txt                    # Python dependencies
+└── .gitignore                          # Git ignore file
 ```
 
 ## Features
@@ -125,6 +126,9 @@ python inference/segmentation_inference.py
 
 # Task-adaptive segmentation inference
 python inference/segmentation_task_adaptive.py
+
+# Joint training segmentation inference
+python inference/segmentation_joint_training.py
 ```
 
 ## Model Architecture
