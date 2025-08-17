@@ -35,11 +35,11 @@ CONFIG = {
     'full_dose_dir': '/YEREL/dataset/full_dose',
     
     # Model weights paths
-    'task_adaptive_model_path': '/ari/users/nsefercioglu/model-weights/task-adaptive/...',
-    'base_unet_model_path': '/ari/users/nsefercioglu/model-weights/base-unet/...',
+    'task_adaptive_model_path': '.../model-weights/task-adaptive/...',
+    'base_unet_model_path': '.../model-weights/base-unet/...',
     
     # Output directory for plots and logs
-    'output_dir': '/ari/users/nsefercioglu/inference-results/bounding-box'
+    'output_dir': '.../inference-results/bounding-box'
 }
 
 """#### Output Directory and Logging Setup"""
