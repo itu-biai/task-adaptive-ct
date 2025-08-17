@@ -20,16 +20,16 @@ CONFIG = {
     'num_classes': 3,  # Number of segmentation classes
     
     # Dataset directories
-    'low_dose_dir': '/YEREL/dataset/low_dose',
-    'full_dose_dir': '/YEREL/dataset/full_dose',
-    'seg_dir': '/YEREL/dataset/segmentation_slices',
+    'low_dose_dir': '/.../dataset/low_dose',
+    'full_dose_dir': '/.../dataset/full_dose',
+    'seg_dir': '/.../dataset/segmentation_slices',
     
     # Model weights paths
-    'seg_model_path': '/ari/users/nsefercioglu/model-weights/seg-unet/seg_unet_20250815_112913.pth',
-    'task_adaptive_model_path': '/ari/users/nsefercioglu/model-weights/task-adaptive/task_adaptive_unet_20250815_150041.pth',
+    'seg_model_path': '.../model-weights/seg-unet/seg_unet_20250815_112913.pth',
+    'task_adaptive_model_path': '.../model-weights/task-adaptive/task_adaptive_unet_20250815_150041.pth',
     
     # Output directory for plots and logs
-    'output_dir': '/ari/users/nsefercioglu/inference-results/task-adaptive'
+    'output_dir': '.../inference-results/task-adaptive'
 }
 
 """#### Output Directory and Logging Setup"""

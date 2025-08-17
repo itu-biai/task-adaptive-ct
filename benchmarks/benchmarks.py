@@ -20,9 +20,9 @@ CONFIG = {
     'theta': None,  # None for auto-calculation
     
     # Directory paths
-    'low_dose_dir': "/ari/users/nsefercioglu/preprocessed_data/low_dose",
-    'full_dose_dir': "/ari/users/nsefercioglu/preprocessed_data/full_dose",
-    'seg_dir': "/ari/users/nsefercioglu/preprocessed_data/segmentation_slices"
+    'low_dose_dir': ".../preprocessed_data/low_dose",
+    'full_dose_dir': ".../preprocessed_data/full_dose",
+    'seg_dir': ".../preprocessed_data/segmentation_slices"
 }
 
 # Function to preload .npy files from a folder
