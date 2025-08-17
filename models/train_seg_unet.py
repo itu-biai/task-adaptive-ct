@@ -1,34 +1,158 @@
 """#### Install Libraries"""
 
 import torch
-import torch.nn as nn
-import torch.optim as optim
 import numpy as np
 import torchvision.transforms as transforms
-from torch.utils.data import Dataset, DataLoader, random_split
 import matplotlib.pyplot as plt
-from torchvision import transforms
 import os
+from torchvision import transforms
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader, random_split
+from datetime import datetime
+import json
 
 """#### CONFIG"""
 
 CONFIG = {
     # Training parameters
-    'num_epochs': 30,
+    'num_epochs': 200,
     'learning_rate': 1e-3,
-    'batch_size': 8,
-    'num_workers': 2,
+    'batch_size': 32,
+    'num_workers': 64,
     'train_test_split': 0.8,  # 80% training, 20% testing
     'num_classes': 3,  # Number of segmentation classes
     
+    # Optimizer parameters
+    'optimizer': 'Adam',
+    'weight_decay': 1e-4,  # L2 regularization to prevent overfitting
+    'betas': (0.9, 0.999),  # Adam momentum parameters
+    'eps': 1e-8,  # Adam epsilon for numerical stability
+    
+    # Learning rate scheduling
+    'use_lr_scheduler': True,
+    'scheduler_type': 'StepLR',  # Options: 'StepLR', 'ReduceLROnPlateau', 'CosineAnnealingLR'
+    'step_size': 15,  # For StepLR: reduce LR every 15 epochs
+    'gamma': 0.5,  # For StepLR: multiply LR by 0.5
+    'patience_lr': 8,  # For ReduceLROnPlateau: wait 8 epochs before reducing LR
+    'factor': 0.5,  # For ReduceLROnPlateau: multiply LR by 0.5
+    'min_lr': 1e-6,  # Minimum learning rate
+    
+    # Early stopping parameters
+    'patience': 10,  # Wait 10 epochs without improvement
+    
     # Dataset directories
-    'image_dir': 'full_dose',
-    'mask_dir': 'segmentation_slices',
+    'image_dir': '/YEREL/dataset/full_dose',
+    'mask_dir': '/YEREL/dataset/segmentation_slices',
+    
+    # Output directory for plots and logs
+    'output_dir': '/ari/users/nsefercioglu/training-logs/segmentation-unet', 
     
     # Loss parameters
-    'criterion': nn.CrossEntropyLoss(),
-    'optimizer': 'Adam'
+    'criterion': nn.CrossEntropyLoss()
 }
+
+"""#### Output Directory and Logging Setup"""
+
+# Create output directory if it doesn't exist
+os.makedirs(CONFIG['output_dir'], exist_ok=True)
+
+# Create unique run directory with timestamp
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+run_dir = os.path.join(CONFIG['output_dir'], f"training_run_{timestamp}")
+os.makedirs(run_dir, exist_ok=True)
+
+print(f"Training outputs will be saved to: {run_dir}")
+
+# Save configuration to run directory
+config_path = os.path.join(run_dir, "config.json")
+config_to_save = CONFIG.copy()
+# Convert non-serializable objects to strings
+config_to_save['criterion'] = str(CONFIG['criterion'])
+with open(config_path, 'w') as f:
+    json.dump(config_to_save, f, indent=2)
+
+# Initialize training tracking
+training_history = {
+    'epoch': [],
+    'train_loss': [],
+    'val_dice': [],
+    'learning_rate': [],
+    'best_epoch': 0,
+    'best_dice': -1.0,
+    'best_dice_std': 0.0
+}
+
+# Initialize log file
+log_file_path = os.path.join(run_dir, "training_log.txt")
+log_file = open(log_file_path, 'w')
+log_file.write(f"Training Log - Started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+log_file.write("="*80 + "\n")
+log_file.write(f"Configuration:\n")
+for key, value in config_to_save.items():
+    log_file.write(f"  {key}: {value}\n")
+log_file.write("="*80 + "\n\n")
+log_file.flush()
+
+def log_and_print(message):
+    """Print message and write to log file"""
+    print(message)
+    log_file.write(message + "\n")
+    log_file.flush()
+
+def save_training_plots():
+    """Save training curves to plots"""
+    if len(training_history['epoch']) < 2:
+        return
+    
+    # Create figure with subplots
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+    
+    epochs = training_history['epoch']
+    
+    # Plot 1: Training Loss
+    ax1.plot(epochs, training_history['train_loss'], 'b-', label='Training Loss', linewidth=2)
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Training Loss Over Time')
+    ax1.grid(True, alpha=0.3)
+    ax1.legend()
+    
+    # Plot 2: Validation Dice
+    ax2.plot(epochs, training_history['val_dice'], 'g-', label='Validation Dice', linewidth=2)
+    # Mark best epoch
+    if training_history['best_epoch'] > 0:
+        best_idx = training_history['best_epoch'] - 1
+        ax2.scatter(epochs[best_idx], training_history['val_dice'][best_idx], 
+                   color='red', s=100, marker='*', label=f'Best (Epoch {training_history["best_epoch"]})')
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('Dice Score')
+    ax2.set_title('Validation Dice Score Over Time')
+    ax2.grid(True, alpha=0.3)
+    ax2.legend()
+    
+    # Plot 3: Learning Rate
+    ax3.plot(epochs, training_history['learning_rate'], 'm-', label='Learning Rate', linewidth=2)
+    ax3.set_xlabel('Epoch')
+    ax3.set_ylabel('Learning Rate')
+    ax3.set_title('Learning Rate Schedule')
+    ax3.set_yscale('log')
+    ax3.grid(True, alpha=0.3)
+    ax3.legend()
+    
+    # Plot 4: Keep empty or add additional metrics if needed
+    ax4.axis('off')
+    ax4.text(0.5, 0.5, 'Additional metrics\ncan be added here', 
+             ha='center', va='center', fontsize=12, style='italic')
+    
+    plt.tight_layout()
+    
+    # Save plot
+    plot_path = os.path.join(run_dir, "training_curves.png")
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    log_and_print(f"Training curves saved to: {plot_path}")
 
 """#### Dataset"""
 
@@ -210,10 +334,64 @@ model = U_Net(in_channels=1, out_channels=CONFIG['num_classes']).to(device)
 
 # Setup optimizer based on CONFIG
 if CONFIG['optimizer'] == 'Adam':
-    optimizer = optim.Adam(model.parameters(), lr=CONFIG['learning_rate'])
+    optimizer = optim.Adam(
+        model.parameters(), 
+        lr=CONFIG['learning_rate'],
+        weight_decay=CONFIG['weight_decay'],
+        betas=CONFIG['betas'],
+        eps=CONFIG['eps']
+    )
+elif CONFIG['optimizer'] == 'SGD':
+    optimizer = optim.SGD(
+        model.parameters(), 
+        lr=CONFIG['learning_rate'],
+        weight_decay=CONFIG['weight_decay'],
+        momentum=0.9
+    )
+else:
+    raise ValueError(f"Unsupported optimizer: {CONFIG['optimizer']}")
+
 criterion = CONFIG['criterion']
 
-# Training loop
+# Setup learning rate scheduler
+scheduler = None
+if CONFIG['use_lr_scheduler']:
+    if CONFIG['scheduler_type'] == 'StepLR':
+        scheduler = optim.lr_scheduler.StepLR(
+            optimizer, 
+            step_size=CONFIG['step_size'], 
+            gamma=CONFIG['gamma']
+        )
+    elif CONFIG['scheduler_type'] == 'ReduceLROnPlateau':
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, 
+            mode='max',  # We want to maximize Dice
+            factor=CONFIG['factor'],
+            patience=CONFIG['patience_lr'],
+            min_lr=CONFIG['min_lr'],
+            verbose=True
+        )
+    elif CONFIG['scheduler_type'] == 'CosineAnnealingLR':
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, 
+            T_max=CONFIG['num_epochs'],
+            eta_min=CONFIG['min_lr']
+        )
+    else:
+        raise ValueError(f"Unsupported scheduler type: {CONFIG['scheduler_type']}")
+    
+    log_and_print(f"Using {CONFIG['scheduler_type']} learning rate scheduler")
+
+# ----- Training loop with Early Stopping -----
+# Early stopping variables
+best_dice = -1.0
+epochs_without_improvement = 0
+best_model_state = None
+
+log_and_print(f"\nStarting training for {CONFIG['num_epochs']} epochs...")
+log_and_print(f"Device: {device}")
+log_and_print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+
 for epoch in range(CONFIG['num_epochs']):
     model.train()
     train_loss = 0.0
@@ -240,16 +418,126 @@ for epoch in range(CONFIG['num_epochs']):
     # Compute statistics
     avg_dice_per_case = np.mean(dice_per_case_scores)
     std_dice_per_case = np.std(dice_per_case_scores)
-    print(f"Epoch [{epoch+1}/{CONFIG['num_epochs']}], Loss: {train_loss:.4f}, "
-          f"U-Net Segmentation -> Dice Per Case: {avg_dice_per_case:.4f} ± {std_dice_per_case:.4f}")
+
+    # Get current learning rate for display
+    current_lr = optimizer.param_groups[0]['lr']
+    
+    # Track metrics in history
+    training_history['epoch'].append(epoch + 1)
+    training_history['train_loss'].append(train_loss)
+    training_history['val_dice'].append(avg_dice_per_case)
+    training_history['learning_rate'].append(current_lr)
+    
+    # Early stopping logic
+    if avg_dice_per_case > best_dice:
+        best_dice = avg_dice_per_case
+        best_model_state = model.state_dict().copy()
+        epochs_without_improvement = 0
+        training_history['best_epoch'] = epoch + 1
+        training_history['best_dice'] = best_dice
+        training_history['best_dice_std'] = std_dice_per_case
+        log_and_print(f"Epoch [{epoch+1}/{CONFIG['num_epochs']}], Loss: {train_loss:.4f}, LR: {current_lr:.2e}, "
+              f"U-Net Segmentation -> Dice Per Case: {avg_dice_per_case:.4f} ± {std_dice_per_case:.4f} (NEW BEST!)")
+    else:
+        epochs_without_improvement += 1
+        log_and_print(f"Epoch [{epoch+1}/{CONFIG['num_epochs']}], Loss: {train_loss:.4f}, LR: {current_lr:.2e}, "
+              f"U-Net Segmentation -> Dice Per Case: {avg_dice_per_case:.4f} ± {std_dice_per_case:.4f} "
+              f"(No improvement: {epochs_without_improvement}/{CONFIG['patience']})")
+    
+    # Update learning rate scheduler
+    if scheduler is not None:
+        if CONFIG['scheduler_type'] == 'ReduceLROnPlateau':
+            scheduler.step(avg_dice_per_case)  # Step with Dice for plateau detection
+        else:
+            scheduler.step()  # Step with epoch for other schedulers
+    
+    # Check early stopping condition
+    if epochs_without_improvement >= CONFIG['patience']:
+        log_and_print(f"\nEarly stopping triggered! No improvement in Dice for {CONFIG['patience']} epochs.")
+        log_and_print(f"Loading best model with Dice: {best_dice:.4f}")
+        model.load_state_dict(best_model_state)
+        break
+
+# If training completed without early stopping, use the best model found
+if best_model_state is not None and epochs_without_improvement < CONFIG['patience']:
+    log_and_print(f"\nTraining completed. Loading best model with Dice: {best_dice:.4f}")
+    model.load_state_dict(best_model_state)
+
+# Save final plots
+save_training_plots()
 
 trained_Unet = model
 
-torch.save(trained_Unet.state_dict(), 'unet_segmentation_state.pth')
+# Save model weights with timestamp to both locations
+timestamped_model_name = f'seg_unet_{timestamp}.pth'
+original_model_path = f'/ari/users/nsefercioglu/model-weights/seg-unet/{timestamped_model_name}'
+
+torch.save(trained_Unet.state_dict(), original_model_path)
+
+log_and_print(f"Model saved to: {original_model_path}")
+
+# Calculate final metrics with the best model
+log_and_print("\nCalculating final metrics with best model...")
+model.eval()
+final_dice_scores = []
+with torch.no_grad():
+    for images, masks in test_loader:
+        images, masks = images.to(device), masks.to(device)
+        output = model(images)
+        dice_scores = calculate_dice(output, masks, num_classes=CONFIG['num_classes'])
+        final_dice_scores.extend(dice_scores.cpu().numpy())
+final_avg_dice = np.mean(final_dice_scores)
+final_std_dice = np.std(final_dice_scores)
+
+# Convert training history to JSON-serializable format
+json_training_history = {
+    'epoch': [int(x) for x in training_history['epoch']],
+    'train_loss': [float(x) for x in training_history['train_loss']],
+    'val_dice': [float(x) for x in training_history['val_dice']],
+    'learning_rate': [float(x) for x in training_history['learning_rate']],
+    'best_epoch': int(training_history['best_epoch']),
+    'best_dice': float(training_history['best_dice']),
+    'best_dice_std': float(training_history['best_dice_std'])
+}
+
+# Save training history and final results
+results_summary = {
+    'training_history': json_training_history,
+    'final_metrics': {
+        'dice_mean': float(final_avg_dice),
+        'dice_std': float(final_std_dice)
+    },
+    'best_epoch': int(json_training_history['best_epoch']),
+    'total_epochs_trained': len(json_training_history['epoch']),
+    'early_stopped': len(json_training_history['epoch']) < CONFIG['num_epochs']
+}
+
+# Save results to JSON
+results_path = os.path.join(run_dir, 'training_results.json')
+with open(results_path, 'w') as f:
+    json.dump(results_summary, f, indent=2)
+
+log_and_print(f"Training results saved to: {results_path}")
+
+# Log training summary
+log_and_print("\n" + "="*80)
+log_and_print("TRAINING SUMMARY")
+log_and_print("="*80)
+log_and_print(f"Total epochs trained: {len(training_history['epoch'])}/{CONFIG['num_epochs']}")
+log_and_print(f"Best epoch: {training_history['best_epoch']}")
+log_and_print(f"Best Dice: {training_history['best_dice']:.4f} ± {training_history['best_dice_std']:.4f}")
+log_and_print(f"Early stopping: {'Yes' if len(training_history['epoch']) < CONFIG['num_epochs'] else 'No'}")
+log_and_print(f"Final learning rate: {training_history['learning_rate'][-1]:.2e}")
+log_and_print("="*80)
+
+# Close log file
+log_and_print(f"\nTraining completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+log_and_print(f"All outputs saved to: {run_dir}")
+log_file.close()
 
 """#### Final Results"""
 
-def plot_segmentation_inference(model, dataset, sample_idx=0, num_classes=2, device='cuda' if torch.cuda.is_available() else 'cpu'):
+def plot_segmentation_inference(model, dataset, sample_idx=0, num_classes=3, device='cuda' if torch.cuda.is_available() else 'cpu', save_path=None):
     model.eval()
     model.to(device)
     image, ground_truth = dataset[sample_idx]
@@ -318,7 +606,23 @@ def plot_segmentation_inference(model, dataset, sample_idx=0, num_classes=2, dev
     axes[1, 2].axis('off')
 
     plt.tight_layout()
-    plt.show()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        log_and_print(f"Segmentation visualization saved to: {save_path}")
+        plt.close()
+    else:
+        plt.show()
+
+# Create save path for the segmentation visualization
+segmentation_save_path = os.path.join(run_dir, "segmentation_visualization_sample_5.png")
 
 # Call the function with your trained U-Net and test dataset
-plot_segmentation_inference(trained_Unet, test_dataset, sample_idx=98, num_classes=CONFIG['num_classes'])
+plot_segmentation_inference(
+    model=trained_Unet, 
+    dataset=test_dataset, 
+    sample_idx=5, 
+    num_classes=CONFIG['num_classes'], 
+    device=device,
+    save_path=segmentation_save_path
+)

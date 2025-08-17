@@ -11,12 +11,12 @@ CONFIG = {
     'target_size': (512, 512),  # Target size for resizing
     
     # Low-dose simulation parameters
-    'dose_fraction': 0.50,  # Fraction of original dose
+    'dose_fraction': 0.75,  # Fraction of original dose
     'theta': None,  # Projection angles, None for auto
     
     # Directory paths
-    'volume_folder': "/ari/users/nsefercioglu/nifti-poc-data/Volumes",
-    'segmentation_folder': "/ari/users/nsefercioglu/nifti-poc-data/Segmentations",
+    'volume_folder': "/ari/users/nsefercioglu/nifti-data/Volumes",
+    'segmentation_folder': "/ari/users/nsefercioglu/nifti-data/Segmentations",
     'output_dir': "/ari/users/nsefercioglu/preprocessed_data",
     
     # Output subdirectories
@@ -119,9 +119,14 @@ def get_matched_files(vol_folder, seg_folder):
 # Get matched file pairs
 matched_pairs = get_matched_files(CONFIG['volume_folder'], CONFIG['segmentation_folder'])
 
+# Initialize counters for summary
+total_slices_saved = 0
+slices_per_volume = {}
+
 # Process each pair of files
 for vol_file, seg_file in matched_pairs:
     print(f"Processing {vol_file} and {seg_file}...")
+    slices_per_volume[vol_file] = 0
     
     # Load the .nii files
     volume_path = os.path.join(CONFIG['volume_folder'], vol_file)
@@ -173,8 +178,24 @@ for vol_file, seg_file in matched_pairs:
             np.save(low_dose_save_path, low_dose_final)    # normalized [0, 1]
             np.save(seg_save_path, seg_final)
             
+            # Update counters
+            total_slices_saved += 1
+            slices_per_volume[vol_file] += 1
+            
             print(f"  Saved slice {slice_idx}/{num_slices-1} for {identifier}")
         else:
             print(f"  Skipped slice {slice_idx}/{num_slices-1} for {identifier} (all zeros in segmentation)")
 
+# Create summary file
+summary_path = os.path.join(CONFIG['output_dir'], 'dataset_summary.txt')
+with open(summary_path, 'w') as f:
+    f.write(f"Dataset Summary\n")
+    f.write(f"==============\n\n")
+    f.write(f"Total slices saved: {total_slices_saved}\n\n")
+    f.write(f"Slices per volume:\n")
+    f.write(f"----------------\n")
+    for vol_file, count in slices_per_volume.items():
+        f.write(f"{vol_file}: {count} slices\n")
+
 print(f"All relevant slices saved successfully in {CONFIG['output_dir']} with size {CONFIG['target_size']}, including normalized low-dose, full-dose and segmentation versions!")
+print(f"Summary saved to {summary_path}")

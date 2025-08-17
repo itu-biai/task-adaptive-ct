@@ -14,13 +14,13 @@ CONFIG = {
     'target_size': (512, 512),  # Target size for resizing
     
     # Low-dose simulation parameters
-    'dose_fraction': 0.50,  # Fraction of original dose
+    'dose_fraction': 0.75,  # Fraction of original dose
     'theta': None,  # Projection angles, None for auto
     
     # Directory paths
-    'volume_folder': "/ari/users/nsefercioglu/nifti-poc-data/Volumes",
-    'segmentation_folder': "/ari/users/nsefercioglu/nifti-poc-data/Segmentations",
-    'output_dir': "/ari/users/nsefercioglu/parallel_preprocessed_data",
+    'volume_folder': "/ari/users/nsefercioglu/nifti-data/Volumes",
+    'segmentation_folder': "/ari/users/nsefercioglu/nifti-data/Segmentations",
+    'output_dir': "/ari/users/nsefercioglu/preprocessed_data",
     
     # Output subdirectories
     'low_dose_subdir': "low_dose",
@@ -150,6 +150,10 @@ def main():
     # Get matched file pairs
     matched_pairs = get_matched_files(CONFIG['volume_folder'], CONFIG['segmentation_folder'])
     
+    # Initialize counters for summary
+    total_slices_saved = 0
+    slices_per_volume = {}
+    
     # Create a pool of workers
     pool = Pool(processes=CONFIG['n_processes'])
     
@@ -194,13 +198,30 @@ def main():
         # Count processed slices
         processed_slices = sum(1 for r in results if r is not None)
         print(f"Processed {processed_slices} slices for {identifier} (skipped {num_slices - processed_slices} empty slices)")
+        
+        # Update summary counters
+        total_slices_saved += processed_slices
+        slices_per_volume[vol_file] = processed_slices
     
     # Clean up
     pool.close()
     pool.join()
     
+    # Create summary file
+    summary_path = os.path.join(CONFIG['output_dir'], 'dataset_summary.txt')
+    with open(summary_path, 'w') as f:
+        f.write(f"Dataset Summary (Parallel Processing)\n")
+        f.write(f"================================\n\n")
+        f.write(f"Total slices saved: {total_slices_saved}\n")
+        f.write(f"Number of processes used: {CONFIG['n_processes']}\n\n")
+        f.write(f"Slices per volume:\n")
+        f.write(f"----------------\n")
+        for vol_file, count in slices_per_volume.items():
+            f.write(f"{vol_file}: {count} slices\n")
+    
     print(f"\nAll relevant slices saved successfully in {CONFIG['output_dir']} with size {CONFIG['target_size']}, "
           f"including normalized low-dose, full-dose and segmentation versions!")
+    print(f"Summary saved to {summary_path}")
 
 if __name__ == '__main__':
     main()

@@ -11,7 +11,6 @@ from torch.utils.data import Dataset, random_split
 CONFIG = {
     # Benchmark parameters
     'batch_size': 1,
-    'device': 'cuda',  # or 'cpu'
     'train_test_split': 0.8,  # 80% training, 20% testing
     
     # BM3D parameters
@@ -21,9 +20,9 @@ CONFIG = {
     'theta': None,  # None for auto-calculation
     
     # Directory paths
-    'low_dose_dir': "...",
-    'full_dose_dir': "...",
-    'seg_dir': "..."
+    'low_dose_dir': "/ari/users/nsefercioglu/preprocessed_data/low_dose",
+    'full_dose_dir': "/ari/users/nsefercioglu/preprocessed_data/full_dose",
+    'seg_dir': "/ari/users/nsefercioglu/preprocessed_data/segmentation_slices"
 }
 
 # Function to preload .npy files from a folder
@@ -121,6 +120,31 @@ def masked_ssim_metric(pred, target, mask):
     return ssim_metric(masked_pred, masked_target)
 
 # Calculate metrics for low-dose, FBP, and BM3D images (regular and masked)
+def save_metrics_to_file(metrics, output_file):
+    """Save benchmark metrics to a text file."""
+    with open(output_file, 'w') as f:
+        # Handle both key formats (lowdose and low-dose)
+        method_mapping = {
+            'lowdose': 'Low-Dose Images',
+            'low-dose': 'Low-Dose Images',
+            'fbp': 'FBP Reconstructed',
+            'bm3d': 'BM3D Denoised'
+        }
+        
+        # Determine which key format is used
+        if 'lowdose' in metrics:
+            methods = ['lowdose', 'fbp', 'bm3d']
+        else:
+            methods = ['low-dose', 'fbp', 'bm3d']
+            
+        for method in methods:
+            method_name = method_mapping[method]
+            f.write(f"{method_name}:\n")
+            f.write(f"  PSNR: {metrics[method]['psnr'][0]:.4f} ± {metrics[method]['psnr'][1]:.4f}\n")
+            f.write(f"  SSIM: {metrics[method]['ssim'][0]:.4f} ± {metrics[method]['ssim'][1]:.4f}\n")
+            f.write(f"  Masked PSNR: {metrics[method]['masked_psnr'][0]:.4f} ± {metrics[method]['masked_psnr'][1]:.4f}\n")
+            f.write(f"  Masked SSIM: {metrics[method]['masked_ssim'][0]:.4f} ± {metrics[method]['masked_ssim'][1]:.4f}\n\n")
+
 def evaluate_metrics(dataset, theta, sigma_psd, image_size=(512, 512)):
     # Initialize lists for metrics
     lowdose_psnr_scores = []
@@ -243,3 +267,8 @@ if __name__ == "__main__":
 
     # Evaluate metrics
     metrics = evaluate_metrics(test_dataset, CONFIG['theta'], CONFIG['sigma_psd'], image_size=(512, 512))
+    
+    # Save metrics to file
+    output_file = os.path.join(os.path.dirname(__file__), 'benchmark_results.txt')
+    save_metrics_to_file(metrics, output_file)
+    print(f"\nBenchmark results have been saved to: {output_file}")

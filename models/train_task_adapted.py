@@ -5,32 +5,169 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
 import os
 from torch.utils.data import Dataset, DataLoader, random_split, Subset
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
-import matplotlib.pyplot as plt
+from datetime import datetime
+import json
 
 """#### CONFIG"""
 
 CONFIG = {
     # Training parameters
-    'num_epochs': 35,
+    'num_epochs': 200,
     'learning_rate': 1e-3,
-    'batch_size': 8,
-    'num_workers': 2,
+    'batch_size': 16,
+    'num_workers': 64,
     'train_test_split': 0.8,  # 80% training, 20% testing
     'num_classes': 3,  # Number of segmentation classes
     
+    # Optimizer parameters
+    'optimizer': 'Adam',
+    'weight_decay': 1e-4,  # L2 regularization to prevent overfitting
+    'betas': (0.9, 0.999),  # Adam momentum parameters
+    'eps': 1e-8,  # Adam epsilon for numerical stability
+    
+    # Learning rate scheduling
+    'use_lr_scheduler': True,
+    'scheduler_type': 'StepLR',  # Options: 'StepLR', 'ReduceLROnPlateau', 'CosineAnnealingLR'
+    'step_size': 15,  # For StepLR: reduce LR every 15 epochs
+    'gamma': 0.5,  # For StepLR: multiply LR by 0.5
+    'patience_lr': 8,  # For ReduceLROnPlateau: wait 8 epochs before reducing LR
+    'factor': 0.5,  # For ReduceLROnPlateau: multiply LR by 0.5
+    'min_lr': 1e-6,  # Minimum learning rate
+    
+    # Early stopping parameters
+    'patience': 10,  # Wait 10 epochs without improvement
+    
     # Dataset directories
-    'low_dose_dir': 'low_dose',
-    'full_dose_dir': 'full_dose',
-    'seg_dir': 'segmentation_slices',
+    'low_dose_dir': '/YEREL/dataset/low_dose',
+    'full_dose_dir': '/YEREL/dataset/full_dose',
+    'seg_dir': '/YEREL/dataset/segmentation_slices',
+    
+    # Pretrained model paths
+    'seg_model_path': '/ari/users/nsefercioglu/model-weights/seg-unet/seg_unet_20250815_112913.pth',
+    
+    # Output directory for plots and logs
+    'output_dir': '/ari/users/nsefercioglu/training-logs/task-adaptive',
     
     # Loss parameters
     'criterion_mse': nn.MSELoss(),
-    'optimizer': 'Adam',
     'alpha': 0.5  # Weight for Dice loss (1-alpha for MSE loss)
 }
+
+"""#### Output Directory and Logging Setup"""
+
+# Create output directory if it doesn't exist
+os.makedirs(CONFIG['output_dir'], exist_ok=True)
+
+# Create unique run directory with timestamp
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+run_dir = os.path.join(CONFIG['output_dir'], f"training_run_{timestamp}")
+os.makedirs(run_dir, exist_ok=True)
+
+print(f"Training outputs will be saved to: {run_dir}")
+
+# Save configuration to run directory
+config_path = os.path.join(run_dir, "config.json")
+config_to_save = CONFIG.copy()
+# Convert non-serializable objects to strings
+config_to_save['criterion_mse'] = str(CONFIG['criterion_mse'])
+with open(config_path, 'w') as f:
+    json.dump(config_to_save, f, indent=2)
+
+# Initialize training tracking
+training_history = {
+    'epoch': [],
+    'train_loss': [],
+    'train_mse_loss': [],
+    'train_dice_loss': [],
+    'val_psnr': [],
+    'val_ssim': [],
+    'learning_rate': [],
+    'best_epoch': 0,
+    'best_ssim': -1.0,
+    'best_psnr': -1.0,
+    'best_ssim_std': 0.0,
+    'best_psnr_std': 0.0
+}
+
+# Initialize log file
+log_file_path = os.path.join(run_dir, "training_log.txt")
+log_file = open(log_file_path, 'w')
+log_file.write(f"Training Log - Started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+log_file.write("="*80 + "\n")
+log_file.write(f"Configuration:\n")
+for key, value in config_to_save.items():
+    log_file.write(f"  {key}: {value}\n")
+log_file.write("="*80 + "\n\n")
+log_file.flush()
+
+def log_and_print(message):
+    """Print message and write to log file"""
+    print(message)
+    log_file.write(message + "\n")
+    log_file.flush()
+
+def save_training_plots():
+    """Save training curves to plots"""
+    if len(training_history['epoch']) < 2:
+        return
+    
+    # Create figure with subplots
+    fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+    
+    epochs = training_history['epoch']
+    
+    # Plot 1: Training Losses
+    ax1.plot(epochs, training_history['train_loss'], 'b-', label='Total Loss', linewidth=2)
+    ax1.plot(epochs, training_history['train_mse_loss'], 'g-', label='MSE Loss', linewidth=2)
+    ax1.plot(epochs, training_history['train_dice_loss'], 'r-', label='Dice Loss', linewidth=2)
+    ax1.set_xlabel('Epoch')
+    ax1.set_ylabel('Loss')
+    ax1.set_title('Training Losses Over Time')
+    ax1.grid(True, alpha=0.3)
+    ax1.legend()
+    
+    # Plot 2: Validation PSNR
+    ax2.plot(epochs, training_history['val_psnr'], 'g-', label='Validation PSNR', linewidth=2)
+    ax2.set_xlabel('Epoch')
+    ax2.set_ylabel('PSNR (dB)')
+    ax2.set_title('Validation PSNR Over Time')
+    ax2.grid(True, alpha=0.3)
+    ax2.legend()
+    
+    # Plot 3: Validation SSIM
+    ax3.plot(epochs, training_history['val_ssim'], 'r-', label='Validation SSIM', linewidth=2)
+    # Mark best epoch
+    if training_history['best_epoch'] > 0:
+        best_idx = training_history['best_epoch'] - 1
+        ax3.scatter(epochs[best_idx], training_history['val_ssim'][best_idx], 
+                   color='red', s=100, marker='*', label=f'Best (Epoch {training_history["best_epoch"]})')
+    ax3.set_xlabel('Epoch')
+    ax3.set_ylabel('SSIM')
+    ax3.set_title('Validation SSIM Over Time')
+    ax3.grid(True, alpha=0.3)
+    ax3.legend()
+    
+    # Plot 4: Learning Rate
+    ax4.plot(epochs, training_history['learning_rate'], 'm-', label='Learning Rate', linewidth=2)
+    ax4.set_xlabel('Epoch')
+    ax4.set_ylabel('Learning Rate')
+    ax4.set_title('Learning Rate Schedule')
+    ax4.set_yscale('log')
+    ax4.grid(True, alpha=0.3)
+    ax4.legend()
+    
+    plt.tight_layout()
+    
+    # Save plot
+    plot_path = os.path.join(run_dir, "training_curves.png")
+    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    log_and_print(f"Training curves saved to: {plot_path}")
 
 """#### Dataset"""
 
@@ -266,25 +403,80 @@ test_loader = DataLoader(
 
 # Load pre-trained segmentation model
 seg_model = U_Net(in_channels=1, out_channels=CONFIG['num_classes']).to(device)
-seg_model.load_state_dict(torch.load('unet_segmentation_state.pth'))
+seg_model.load_state_dict(torch.load(CONFIG['seg_model_path']))
 seg_model.eval()
 for param in seg_model.parameters():
     param.requires_grad = False
 
-"""#### Task-Adapted Training"""
-
 # Define reconstruction model
 recon_model = U_Net(in_channels=1, out_channels=1).to(device)
 
-# Optimizer and Loss
+# Setup optimizer based on CONFIG
 if CONFIG['optimizer'] == 'Adam':
-    optimizer = optim.Adam(recon_model.parameters(), lr=CONFIG['learning_rate'])
+    optimizer = optim.Adam(
+        recon_model.parameters(), 
+        lr=CONFIG['learning_rate'],
+        weight_decay=CONFIG['weight_decay'],
+        betas=CONFIG['betas'],
+        eps=CONFIG['eps']
+    )
+elif CONFIG['optimizer'] == 'SGD':
+    optimizer = optim.SGD(
+        recon_model.parameters(), 
+        lr=CONFIG['learning_rate'],
+        weight_decay=CONFIG['weight_decay'],
+        momentum=0.9
+    )
+else:
+    raise ValueError(f"Unsupported optimizer: {CONFIG['optimizer']}")
+
 criterion_mse = CONFIG['criterion_mse']
+
+# Setup learning rate scheduler
+scheduler = None
+if CONFIG['use_lr_scheduler']:
+    if CONFIG['scheduler_type'] == 'StepLR':
+        scheduler = optim.lr_scheduler.StepLR(
+            optimizer, 
+            step_size=CONFIG['step_size'], 
+            gamma=CONFIG['gamma']
+        )
+    elif CONFIG['scheduler_type'] == 'ReduceLROnPlateau':
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, 
+            mode='max',  # We want to maximize SSIM
+            factor=CONFIG['factor'],
+            patience=CONFIG['patience_lr'],
+            min_lr=CONFIG['min_lr'],
+            verbose=True
+        )
+    elif CONFIG['scheduler_type'] == 'CosineAnnealingLR':
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, 
+            T_max=CONFIG['num_epochs'],
+            eta_min=CONFIG['min_lr']
+        )
+    else:
+        raise ValueError(f"Unsupported scheduler type: {CONFIG['scheduler_type']}")
+    
+    log_and_print(f"Using {CONFIG['scheduler_type']} learning rate scheduler")
 
 # Create circular mask
 mask = create_circular_mask(h=512, w=512, center=(256, 256), radius=256)
 
-# Training loop
+"""#### Task-Adapted Training"""
+
+# ----- Training loop with Early Stopping -----
+# Early stopping variables
+best_ssim = -1.0
+epochs_without_improvement = 0
+best_model_state = None
+
+log_and_print(f"\nStarting training for {CONFIG['num_epochs']} epochs...")
+log_and_print(f"Device: {device}")
+log_and_print(f"Reconstruction model parameters: {sum(p.numel() for p in recon_model.parameters()):,}")
+log_and_print(f"Segmentation model parameters (frozen): {sum(p.numel() for p in seg_model.parameters()):,}")
+
 for epoch in range(CONFIG['num_epochs']):
     recon_model.train()
     train_loss = 0.0
@@ -319,7 +511,7 @@ for epoch in range(CONFIG['num_epochs']):
     train_mse_loss /= len(train_loader)
     train_dice_loss /= len(train_loader)
 
-    # Evaluation
+    # Evaluation on test set using masked metrics
     recon_model.eval()
     psnr_scores = []
     ssim_scores = []
@@ -328,72 +520,156 @@ for epoch in range(CONFIG['num_epochs']):
             low_dose = low_dose.to(device)
             full_dose = full_dose.to(device)
             reconstructed = recon_model(low_dose)
-            psnr_values = masked_psnr_metric(reconstructed, full_dose, mask)
-            ssim_values = masked_ssim_metric(reconstructed, full_dose, mask)
-            psnr_scores.extend(psnr_values)
-            ssim_scores.extend(ssim_values)
+            psnr_scores.extend(masked_psnr_metric(reconstructed, full_dose, mask))
+            ssim_scores.extend(masked_ssim_metric(reconstructed, full_dose, mask))
     avg_psnr = np.mean(psnr_scores)
-    std_psnr = np.std(psnr_scores)
     avg_ssim = np.mean(ssim_scores)
+    std_psnr = np.std(psnr_scores)
     std_ssim = np.std(ssim_scores)
 
-    print(f"Epoch [{epoch+1}/{CONFIG['num_epochs']}], Total Loss: {train_loss:.4f}, "
-          f"MSE Loss: {train_mse_loss:.4f}, Dice Loss: {train_dice_loss:.4f}, "
-          f"PSNR: {avg_psnr:.4f} ± {std_psnr:.4f}, SSIM: {avg_ssim:.4f} ± {std_ssim:.4f}")
+    # Get current learning rate for display
+    current_lr = optimizer.param_groups[0]['lr']
+    
+    # Track metrics in history
+    training_history['epoch'].append(epoch + 1)
+    training_history['train_loss'].append(train_loss)
+    training_history['train_mse_loss'].append(train_mse_loss)
+    training_history['train_dice_loss'].append(train_dice_loss)
+    training_history['val_psnr'].append(avg_psnr)
+    training_history['val_ssim'].append(avg_ssim)
+    training_history['learning_rate'].append(current_lr)
+    
+    # Early stopping logic
+    if avg_ssim > best_ssim:
+        best_ssim = avg_ssim
+        best_model_state = recon_model.state_dict().copy()
+        epochs_without_improvement = 0
+        training_history['best_epoch'] = epoch + 1
+        training_history['best_ssim'] = best_ssim
+        training_history['best_psnr'] = avg_psnr
+        training_history['best_ssim_std'] = std_ssim
+        training_history['best_psnr_std'] = std_psnr
+        log_and_print(f"Epoch [{epoch+1}/{CONFIG['num_epochs']}], Total Loss: {train_loss:.4f}, MSE: {train_mse_loss:.4f}, "
+              f"Dice: {train_dice_loss:.4f}, LR: {current_lr:.2e}, "
+              f"Task-Adaptive -> Masked PSNR: {avg_psnr:.4f} ± {std_psnr:.4f}, "
+              f"Masked SSIM: {avg_ssim:.4f} ± {std_ssim:.4f} (NEW BEST!)")
+    else:
+        epochs_without_improvement += 1
+        log_and_print(f"Epoch [{epoch+1}/{CONFIG['num_epochs']}], Total Loss: {train_loss:.4f}, MSE: {train_mse_loss:.4f}, "
+              f"Dice: {train_dice_loss:.4f}, LR: {current_lr:.2e}, "
+              f"Task-Adaptive -> Masked PSNR: {avg_psnr:.4f} ± {std_psnr:.4f}, "
+              f"Masked SSIM: {avg_ssim:.4f} ± {std_ssim:.4f} (No improvement: {epochs_without_improvement}/{CONFIG['patience']})")
+    
+    # Update learning rate scheduler
+    if scheduler is not None:
+        if CONFIG['scheduler_type'] == 'ReduceLROnPlateau':
+            scheduler.step(avg_ssim)  # Step with SSIM for plateau detection
+        else:
+            scheduler.step()  # Step with epoch for other schedulers
+    
+    # Check early stopping condition
+    if epochs_without_improvement >= CONFIG['patience']:
+        log_and_print(f"\nEarly stopping triggered! No improvement in SSIM for {CONFIG['patience']} epochs.")
+        log_and_print(f"Loading best model with SSIM: {best_ssim:.4f}")
+        recon_model.load_state_dict(best_model_state)
+        break
 
-# Save the trained reconstruction model
-torch.save(recon_model.state_dict(), 'task_adaptive_model.pth')
+# If training completed without early stopping, use the best model found
+if best_model_state is not None and epochs_without_improvement < CONFIG['patience']:
+    log_and_print(f"\nTraining completed. Loading best model with SSIM: {best_ssim:.4f}")
+    recon_model.load_state_dict(best_model_state)
+
+# Save final plots
+save_training_plots()
+
+task_adaptive_model = recon_model
 
 """#### Final Results"""
 
-# Final metrics for low-dose images
+# Save model weights with timestamp
+timestamped_model_name = f'task_adaptive_unet_{timestamp}.pth'
+original_model_path = f'/ari/users/nsefercioglu/model-weights/task-adaptive/{timestamped_model_name}'
+
+# Create model weights directory if it doesn't exist
+os.makedirs(os.path.dirname(original_model_path), exist_ok=True)
+torch.save(task_adaptive_model.state_dict(), original_model_path)
+
+log_and_print(f"Model saved to: {original_model_path}")
+
+# Calculate final metrics with the best model
+log_and_print("\nCalculating final metrics with best model...")
+task_adaptive_model.eval()
+final_psnr_scores = []
+final_ssim_scores = []
+with torch.no_grad():
+    for low_dose, full_dose, seg_map in test_loader:
+        low_dose, full_dose = low_dose.to(device), full_dose.to(device)
+        reconstructed = task_adaptive_model(low_dose)
+        final_psnr_scores.extend(masked_psnr_metric(reconstructed, full_dose, mask))
+        final_ssim_scores.extend(masked_ssim_metric(reconstructed, full_dose, mask))
+final_avg_psnr = np.mean(final_psnr_scores)
+final_avg_ssim = np.mean(final_ssim_scores)
+final_std_psnr = np.std(final_psnr_scores)
+final_std_ssim = np.std(final_ssim_scores)
+
+# Calculate baseline low-dose metrics
+log_and_print("Calculating baseline low-dose metrics...")
 lowdose_psnr_scores = []
 lowdose_ssim_scores = []
 with torch.no_grad():
     for low_dose, full_dose, seg_map in test_loader:
-        low_dose = low_dose.to(device)
-        full_dose = full_dose.to(device)
-        psnr_values = masked_psnr_metric(low_dose, full_dose, mask)
-        ssim_values = masked_ssim_metric(low_dose, full_dose, mask)
-        lowdose_psnr_scores.extend(psnr_values)
-        lowdose_ssim_scores.extend(ssim_values)
+        low_dose, full_dose = low_dose.to(device), full_dose.to(device)
+        lowdose_psnr_scores.extend(masked_psnr_metric(low_dose, full_dose, mask))
+        lowdose_ssim_scores.extend(masked_ssim_metric(low_dose, full_dose, mask))
 lowdose_avg_psnr = np.mean(lowdose_psnr_scores)
-lowdose_std_psnr = np.std(lowdose_psnr_scores)
 lowdose_avg_ssim = np.mean(lowdose_ssim_scores)
+lowdose_std_psnr = np.std(lowdose_psnr_scores)
 lowdose_std_ssim = np.std(lowdose_ssim_scores)
 
-# Print final metrics with improved alignment
-print("\nFinal Metrics Comparison")
-print("-" * 80)
-# Define column widths for better alignment
-col1_width = 30  # Method
-col2_width = 25  # PSNR (Mean ± Std)
-col3_width = 25  # SSIM (Mean ± Std)
+# Save training history and final results
+results_summary = {
+    'training_history': training_history,
+    'final_metrics': {
+        'psnr_mean': float(final_avg_psnr),
+        'psnr_std': float(final_std_psnr),
+        'ssim_mean': float(final_avg_ssim),
+        'ssim_std': float(final_std_ssim)
+    },
+    'lowdose_baseline': {
+        'psnr_mean': float(lowdose_avg_psnr),
+        'psnr_std': float(lowdose_std_psnr),
+        'ssim_mean': float(lowdose_avg_ssim),
+        'ssim_std': float(lowdose_std_ssim)
+    },
+    'best_epoch': training_history['best_epoch'],
+    'total_epochs_trained': len(training_history['epoch']),
+    'early_stopped': len(training_history['epoch']) < CONFIG['num_epochs'],
+    'alpha_weight': CONFIG['alpha']
+}
 
-# Header
-header = f"{'Method':<{col1_width}} {'PSNR (Mean ± Std)':<{col2_width}} {'SSIM (Mean ± Std)':<{col3_width}}"
-print(header)
-print("-" * 80)
+# Save results to JSON
+results_path = os.path.join(run_dir, 'training_results.json')
+with open(results_path, 'w') as f:
+    json.dump(results_summary, f, indent=2)
 
-# Row 1: Low-Dose Images
-psnr_str1 = f"{lowdose_avg_psnr:.4f} ± {lowdose_std_psnr:.4f}"
-ssim_str1 = f"{lowdose_avg_ssim:.4f} ± {lowdose_std_ssim:.4f}"
-row1 = f"{'Low-Dose Images':<{col1_width}} {psnr_str1:<{col2_width}} {ssim_str1:<{col3_width}}"
-print(row1)
+log_and_print(f"Training results saved to: {results_path}")
 
-# Row 2: Task Adaptive Reconstructed
-psnr_str2 = f"{avg_psnr:.4f} ± {std_psnr:.4f}"
-ssim_str2 = f"{avg_ssim:.4f} ± {std_ssim:.4f}"
-row2 = f"{'Task Adaptive Reconstructed':<{col1_width}} {psnr_str2:<{col2_width}} {ssim_str2:<{col3_width}}"
-print(row2)
-
-print("-" * 80)
-
-print("Training completed and model saved as 'task_adaptive_recon_model.pth'.")
+# Log training summary with final metrics comparison
+log_and_print("\n" + "="*80)
+log_and_print("TRAINING SUMMARY")
+log_and_print("="*80)
+log_and_print(f"Total epochs trained: {len(training_history['epoch'])}/{CONFIG['num_epochs']}")
+log_and_print(f"Best epoch: {training_history['best_epoch']}")
+log_and_print(f"Best SSIM: {training_history['best_ssim']:.4f} ± {training_history['best_ssim_std']:.4f}")
+log_and_print(f"Best PSNR: {training_history['best_psnr']:.4f} ± {training_history['best_psnr_std']:.4f}")
+log_and_print(f"Early stopping: {'Yes' if len(training_history['epoch']) < CONFIG['num_epochs'] else 'No'}")
+log_and_print(f"Final learning rate: {training_history['learning_rate'][-1]:.2e}")
+log_and_print(f"Alpha weight (MSE vs Dice): {CONFIG['alpha']:.2f}")
+log_and_print("="*80)
 
 """#### Results Visualization"""
 
-def visualize_task_adaptive_results(recon_model, seg_model, test_dataset, mask, index=0, device='cuda'):
+def visualize_task_adaptive_results(recon_model, seg_model, test_dataset, mask, index=0, device='cuda', save_path=None):
     # Set models to evaluation mode
     recon_model.eval()
     seg_model.eval()
@@ -477,6 +753,29 @@ def visualize_task_adaptive_results(recon_model, seg_model, test_dataset, mask, 
 
     # Adjust layout and display
     plt.tight_layout()
-    plt.show()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        log_and_print(f"Task-adaptive visualization saved to: {save_path}")
+        plt.close()
+    else:
+        plt.show()
 
-visualize_task_adaptive_results(recon_model, seg_model, test_dataset, mask, index=120, device='cuda')
+# Create save path for the task-adaptive visualization
+task_adaptive_save_path = os.path.join(run_dir, "task_adaptive_visualization_sample_5.png")
+
+# Call the visualization function with the trained models
+visualize_task_adaptive_results(
+    recon_model=task_adaptive_model, 
+    seg_model=seg_model, 
+    test_dataset=test_dataset, 
+    mask=mask, 
+    index=5, 
+    device=device,
+    save_path=task_adaptive_save_path
+)
+
+# Close log file
+log_and_print(f"\nTraining completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+log_and_print(f"All outputs saved to: {run_dir}")
+log_file.close()

@@ -1,23 +1,28 @@
+"""#### Install Libraries"""
+
 import torch
 import torch.nn as nn
 import numpy as np
 import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
 import os
 from torch.utils.data import Dataset, DataLoader, random_split
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 from skimage.transform import radon, iradon
 import bm3d
 from scipy.ndimage import zoom
-import matplotlib.pyplot as plt
 from matplotlib.widgets import RectangleSelector
+from datetime import datetime
+import json
 
 """#### CONFIG"""
 
 CONFIG = {
     # Inference parameters
     'batch_size': 1,
-    'device': 'cuda',  # or 'cpu'
+    'num_workers': 64,
     'train_test_split': 0.8,  # 80% training, 20% testing
+    'default_index': 5,  # Default sample index for visualization
     
     # BM3D parameters
     'sigma_psd': 0.075,
@@ -25,16 +30,54 @@ CONFIG = {
     # FBP parameters
     'theta': None,  # None for auto-calculation
     
-    # Visualization parameters
-    'default_index': 15,  # Default sample index for visualization
+    # Dataset directories
+    'low_dose_dir': '/YEREL/dataset/low_dose',
+    'full_dose_dir': '/YEREL/dataset/full_dose',
     
-    # Directory paths
-    'low_dose_dir': "...",
-    'full_dose_dir': "...",
-    'model_weights_path': "..."
+    # Model weights paths
+    'task_adaptive_model_path': '/ari/users/nsefercioglu/model-weights/task-adaptive/...',
+    'base_unet_model_path': '/ari/users/nsefercioglu/model-weights/base-unet/...',
+    
+    # Output directory for plots and logs
+    'output_dir': '/ari/users/nsefercioglu/inference-results/bounding-box'
 }
 
-# Dataset
+"""#### Output Directory and Logging Setup"""
+
+# Create output directory if it doesn't exist
+os.makedirs(CONFIG['output_dir'], exist_ok=True)
+
+# Create unique run directory with timestamp
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+run_dir = os.path.join(CONFIG['output_dir'], f"inference_run_{timestamp}")
+os.makedirs(run_dir, exist_ok=True)
+
+print(f"Inference outputs will be saved to: {run_dir}")
+
+# Save configuration to run directory
+config_path = os.path.join(run_dir, "config.json")
+config_to_save = CONFIG.copy()
+with open(config_path, 'w') as f:
+    json.dump(config_to_save, f, indent=2)
+
+# Initialize log file
+log_file_path = os.path.join(run_dir, "inference_log.txt")
+log_file = open(log_file_path, 'w')
+log_file.write(f"Inference Log - Started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+log_file.write("="*80 + "\n")
+log_file.write(f"Configuration:\n")
+for key, value in config_to_save.items():
+    log_file.write(f"  {key}: {value}\n")
+log_file.write("="*80 + "\n\n")
+log_file.flush()
+
+def log_and_print(message):
+    """Print message and write to log file"""
+    print(message)
+    log_file.write(message + "\n")
+    log_file.flush()
+
+"""#### Dataset"""
 
 # Function to preload .npy files from a folder
 def load_npy_from_folder(folder_path):
@@ -73,32 +116,38 @@ class TaskAdaptiveDataset(Dataset):
 
         return low_dose_img, full_dose_img
 
-# Create dataset and split into train/test
-transform = transforms.ToTensor()
+# Define transform for images
+transform_recon = transforms.ToTensor()  # Images are already normalized to [0, 1] during dataset creation
+
+# Instantiate the dataset
 dataset = TaskAdaptiveDataset(
     CONFIG['low_dose_dir'],
     CONFIG['full_dose_dir'],
-    transform_recon=transform
+    transform_recon=transform_recon
 )
 
 # Set random seed for reproducibility
 torch.manual_seed(1773)
 generator = torch.Generator().manual_seed(1773)
 
-# Split dataset
+# Split dataset into training and testing sets
 train_size = int(CONFIG['train_test_split'] * len(dataset))
 test_size = len(dataset) - train_size
 _, test_dataset = random_split(dataset, [train_size, test_size], generator=generator)
 
-# Create test dataloader
+# Create test DataLoader
 test_loader = DataLoader(
     test_dataset,
     batch_size=CONFIG['batch_size'],
     shuffle=False,
-    num_workers=2
+    num_workers=CONFIG['num_workers']
 )
 
-# Circular Mask
+log_and_print(f"Dataset loaded with {len(dataset)} total samples")
+log_and_print(f"Test dataset contains {len(test_dataset)} samples")
+
+"""#### Circular Mask"""
+
 def create_circular_mask(h, w, center=None, radius=None):
     if center is None:
         center = (w // 2, h // 2)
@@ -108,6 +157,8 @@ def create_circular_mask(h, w, center=None, radius=None):
     dist_from_center = np.sqrt((X - center[0])**2 + (Y - center[1])**2)
     mask = dist_from_center <= radius
     return mask.astype(np.float32)
+
+"""#### PSNR & SSIM Metrics"""
 
 # PSNR and SSIM metrics
 def psnr_metric(pred, target):
@@ -139,6 +190,8 @@ def masked_ssim_metric(pred, target, mask):
     masked_pred = pred * mask_tensor
     masked_target = target * mask_tensor
     return ssim_metric(masked_pred, masked_target)
+
+"""#### U-Net Model"""
 
 # U-Net components
 class DoubleConv(nn.Module):
@@ -208,8 +261,9 @@ class U_Net(nn.Module):
 
         return torch.sigmoid(out)  # Output normalized to [0, 1] for reconstruction
 
-# Visualization Function
-def visualize_reconstruction_results(task_adaptive_model, ld_model, test_dataset, mask, index=CONFIG['default_index'], device=CONFIG['device'], sigma_psd=CONFIG['sigma_psd']):
+"""#### Visualization Function"""
+
+def visualize_reconstruction_results(task_adaptive_model, ld_model, test_dataset, mask, index=CONFIG['default_index'], device='cuda', sigma_psd=CONFIG['sigma_psd']):
     task_adaptive_model.eval()
     ld_model.eval()
 
@@ -400,25 +454,63 @@ def visualize_reconstruction_results(task_adaptive_model, ld_model, test_dataset
     plt.tight_layout()
     plt.show()
 
+"""#### Setup"""
+
 # Set device
-device = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+log_and_print(f"Using device: {device}")
 
 # Create circular mask
 mask = create_circular_mask(512, 512)
 
 # Load pre-trained models
-task_adaptive_model = U_Net(in_channels=1, out_channels=1).to(device)
-task_adaptive_model.load_state_dict(torch.load('...', map_location=device))
-task_adaptive_model.eval()
+log_and_print("Loading pre-trained models...")
 
+# Load Task-Adaptive model
+task_adaptive_model = U_Net(in_channels=1, out_channels=1).to(device)
+task_adaptive_model.load_state_dict(torch.load(CONFIG['task_adaptive_model_path'], map_location=device))
+task_adaptive_model.eval()
+log_and_print(f"Task-Adaptive model loaded from: {CONFIG['task_adaptive_model_path']}")
+
+# Load Base U-Net model
 ld_model = U_Net(in_channels=1, out_channels=1).to(device)
-ld_model.load_state_dict(torch.load('...', map_location=device))
+ld_model.load_state_dict(torch.load(CONFIG['base_unet_model_path'], map_location=device))
 ld_model.eval()
+log_and_print(f"Base U-Net model loaded from: {CONFIG['base_unet_model_path']}")
 
 # Set BM3D sigma_psd
-sigma_psd = 0.075
+sigma_psd = CONFIG['sigma_psd']
+log_and_print(f"BM3D sigma_psd set to: {sigma_psd}")
+
+"""#### Results Visualization and Analysis"""
 
 # Visualize results for a sample
-visualize_reconstruction_results(task_adaptive_model, ld_model, test_dataset, mask, index=91, device=device, sigma_psd=sigma_psd)
+sample_index = CONFIG['default_index']
+log_and_print(f"Starting visualization for sample index: {sample_index}")
 
+# Create save path for the visualization
+visualization_save_path = os.path.join(run_dir, f"bounding_box_analysis_sample_{sample_index}.png")
 
+# Run visualization with results saving
+try:
+    visualize_reconstruction_results(
+        task_adaptive_model, 
+        ld_model, 
+        test_dataset, 
+        mask, 
+        index=sample_index, 
+        device=device, 
+        sigma_psd=sigma_psd
+    )
+    log_and_print("Visualization completed successfully")
+    
+    # Save completion message
+    log_and_print(f"\nInference completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    log_and_print(f"All outputs saved to: {run_dir}")
+    
+except Exception as e:
+    log_and_print(f"Error during visualization: {str(e)}")
+    
+finally:
+    # Close log file
+    log_file.close()

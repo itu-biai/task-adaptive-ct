@@ -13,7 +13,8 @@ import time
 # Import the dataset and other utilities from benchmarks.py
 from benchmarks import (
     CONFIG, TaskAdaptiveUnifiedDataset, create_circular_mask,
-    psnr_metric, ssim_metric, masked_psnr_metric, masked_ssim_metric
+    psnr_metric, ssim_metric, masked_psnr_metric, masked_ssim_metric,
+    save_metrics_to_file
 )
 
 def process_batch(batch_data, theta, sigma_psd, mask):
@@ -23,16 +24,16 @@ def process_batch(batch_data, theta, sigma_psd, mask):
     clean = clean[np.newaxis, ...]  # Shape: (1, H, W)
 
     metrics = {
-        'lowdose': {},
+        'low-dose': {},
         'fbp': {},
         'bm3d': {}
     }
 
     # --- Low-Dose Metrics ---
-    metrics['lowdose']['psnr'] = psnr_metric(noisy, clean)
-    metrics['lowdose']['ssim'] = ssim_metric(noisy, clean)
-    metrics['lowdose']['masked_psnr'] = masked_psnr_metric(noisy, clean, mask)
-    metrics['lowdose']['masked_ssim'] = masked_ssim_metric(noisy, clean, mask)
+    metrics['low-dose']['psnr'] = psnr_metric(noisy, clean)
+    metrics['low-dose']['ssim'] = ssim_metric(noisy, clean)
+    metrics['low-dose']['masked_psnr'] = masked_psnr_metric(noisy, clean, mask)
+    metrics['low-dose']['masked_ssim'] = masked_ssim_metric(noisy, clean, mask)
 
     # --- FBP Reconstruction ---
     noisy_np = noisy  # Shape: (1, H, W)
@@ -104,7 +105,7 @@ def evaluate_metrics_parallel(dataset, theta, sigma_psd, image_size=(512, 512), 
 
     # Aggregate results
     metrics = {
-        'lowdose': {
+        'low-dose': {
             'psnr': [],
             'ssim': [],
             'masked_psnr': [],
@@ -175,3 +176,8 @@ if __name__ == "__main__":
         CONFIG['sigma_psd'],
         image_size=(512, 512)
     )
+    
+    # Save metrics to file
+    output_file = os.path.join(os.path.dirname(__file__), 'benchmark_results.txt')
+    save_metrics_to_file(metrics, output_file)
+    print(f"\nBenchmark results have been saved to: {output_file}")
