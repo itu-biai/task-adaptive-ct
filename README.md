@@ -52,10 +52,10 @@ The project consists of four main components:
    cd task_adaptive_ct
    ```
 
-2. Create a virtual environment and install dependencies:
+2. Create a conda environment and install dependencies:
    ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   conda create -n task_adaptive_ct python=3.9
+   conda activate task_adaptive_ct
    pip install -r requirements.txt
    ```
 
@@ -206,10 +206,10 @@ If you use this code in your research, please consider citing:
 
 ```bibtex
 @misc{task_adaptive_ct,
-  title={Task-Adaptive Low-Dose CT Reconstruction and Segmentation},
-  author={Your Name},
-  year={2024},
-  url={https://github.com/yourusername/task_adaptive_ct}
+  title={To be filled},
+  author={To be filled},
+  year={To be filled},
+  url={To be filled}
 }
 ```
 
