@@ -47,7 +47,7 @@ CONFIG = {
     'seg_dir': '.../dataset/segmentation_slices',
     
     # Pretrained model paths
-    'seg_model_path': '.../model-weights/seg-unet/seg_unet_20250815_112913.pth',
+    'seg_model_path': '.../model-weights/seg-unet/seg_unet.pth',
     
     # Output directory for plots and logs
     'output_dir': '.../training-logs/task-adaptive',
