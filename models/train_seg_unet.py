@@ -42,11 +42,11 @@ CONFIG = {
     'patience': 10,  # Wait 10 epochs without improvement
     
     # Dataset directories
-    'image_dir': '/YEREL/dataset/full_dose',
-    'mask_dir': '/YEREL/dataset/segmentation_slices',
+    'image_dir': '.../dataset/full_dose',
+    'mask_dir': '.../dataset/segmentation_slices',
     
     # Output directory for plots and logs
-    'output_dir': '/ari/users/nsefercioglu/training-logs/segmentation-unet', 
+    'output_dir': '.../training-logs/segmentation-unet', 
     
     # Loss parameters
     'criterion': nn.CrossEntropyLoss()
@@ -470,7 +470,7 @@ trained_Unet = model
 
 # Save model weights with timestamp to both locations
 timestamped_model_name = f'seg_unet_{timestamp}.pth'
-original_model_path = f'/ari/users/nsefercioglu/model-weights/seg-unet/{timestamped_model_name}'
+original_model_path = f'.../model-weights/seg-unet/{timestamped_model_name}'
 
 torch.save(trained_Unet.state_dict(), original_model_path)
 
