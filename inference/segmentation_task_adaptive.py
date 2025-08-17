@@ -25,8 +25,8 @@ CONFIG = {
     'seg_dir': '/.../dataset/segmentation_slices',
     
     # Model weights paths
-    'seg_model_path': '.../model-weights/seg-unet/seg_unet_20250815_112913.pth',
-    'task_adaptive_model_path': '.../model-weights/task-adaptive/task_adaptive_unet_20250815_150041.pth',
+    'seg_model_path': '.../model-weights/seg-unet/seg_unet.pth',
+    'task_adaptive_model_path': '.../model-weights/task-adaptive/task_adaptive_unet.pth',
     
     # Output directory for plots and logs
     'output_dir': '.../inference-results/task-adaptive'
