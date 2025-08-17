@@ -19,9 +19,9 @@ CONFIG = {
     
     # Directory paths
 <<<<<<< HEAD
-    'volume_folder': "/ari/users/nsefercioglu/nifti-data/Volumes",
-    'segmentation_folder': "/ari/users/nsefercioglu/nifti-data/Segmentations",
-    'output_dir': "/ari/users/nsefercioglu/preprocessed_data",
+    'volume_folder': ".../nifti-data/Volumes",
+    'segmentation_folder': ".../nifti-data/Segmentations",
+    'output_dir': ".../preprocessed_data",
 =======
     'volume_folder': "...",
     'segmentation_folder': "...",
