@@ -42,11 +42,11 @@ CONFIG = {
     'patience': 10,  # Increased for longer training - wait 10 epochs without improvement
     
     # Dataset directories
-    'noisy_dir': '/YEREL/dataset/low_dose',
-    'clean_dir': '/YEREL/dataset/full_dose',
+    'noisy_dir': '.../dataset/low_dose',
+    'clean_dir': '.../dataset/full_dose',
     
     # Output directory for plots and logs
-    'output_dir': '/ari/users/nsefercioglu/training-logs/base-unet', 
+    'output_dir': '.../training-logs/base-unet', 
     
     # Loss parameters
     'criterion': nn.MSELoss()
@@ -648,7 +648,7 @@ unet = model
 
 # Save model weights with timestamp to both locations
 timestamped_model_name = f'base_unet_reconstruction_{timestamp}.pth'
-original_model_path = f'/ari/users/nsefercioglu/model-weights/base-unet/{timestamped_model_name}'
+original_model_path = f'.../model-weights/base-unet/{timestamped_model_name}'
 
 torch.save(unet.state_dict(), original_model_path)
 
