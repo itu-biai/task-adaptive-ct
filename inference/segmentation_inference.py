@@ -40,10 +40,10 @@ CONFIG = {
     'seg_dir': '/.../dataset/segmentation_slices',
     
     # Model weights paths
-    'seg_model_path': '.../model-weights/seg-unet/seg_unet_20250815_112913.pth',
-    'base_unet_model_path': '.../model-weights/base-unet/base_unet_reconstruction_20250815_112814.pth',
-    'joint_recon_model_path': '.../model-weights/joint-training/recon_unet/joint_recon_unet_20250815_145814.pth',
-    'task_adaptive_model_path': '.../model-weights/task-adaptive/task_adaptive_unet_20250815_150041.pth',
+    'seg_model_path': '.../model-weights/seg-unet/seg_unet.pth',
+    'base_unet_model_path': '.../model-weights/base-unet/base_unet_reconstruction.pth',
+    'joint_recon_model_path': '.../model-weights/joint-training/recon_unet/joint_recon_unet.pth',
+    'task_adaptive_model_path': '.../model-weights/task-adaptive/task_adaptive_unet.pth',
     
     # Output directory for plots and logs
     'output_dir': '.../inference-results/segmentation'
