@@ -42,12 +42,12 @@ CONFIG = {
     'patience': 10,  # Wait 10 epochs without improvement
     
     # Dataset directories
-    'low_dose_dir': '/YEREL/dataset/low_dose',
-    'full_dose_dir': '/YEREL/dataset/full_dose',
-    'seg_dir': '/YEREL/dataset/segmentation_slices',
+    'low_dose_dir': '.../dataset/low_dose',
+    'full_dose_dir': '.../dataset/full_dose',
+    'seg_dir': '.../dataset/segmentation_slices',
     
     # Output directory for plots and logs
-    'output_dir': '/ari/users/nsefercioglu/training-logs/joint-training',
+    'output_dir': '.../training-logs/joint-training',
     
     # Loss parameters
     'criterion_mse': nn.MSELoss(),
@@ -588,8 +588,8 @@ save_training_plots()
 # Save model weights with timestamp
 timestamped_recon_name = f'joint_recon_unet_{timestamp}.pth'
 timestamped_seg_name = f'joint_seg_unet_{timestamp}.pth'
-recon_model_path = f'/ari/users/nsefercioglu/model-weights/joint-training/recon_unet/{timestamped_recon_name}'
-seg_model_path = f'/ari/users/nsefercioglu/model-weights/joint-training/seg_unet/{timestamped_seg_name}'
+recon_model_path = f'.../model-weights/joint-training/recon_unet/{timestamped_recon_name}'
+seg_model_path = f'.../model-weights/joint-training/seg_unet/{timestamped_seg_name}'
 
 # Create model weights directory if it doesn't exist
 os.makedirs(os.path.dirname(recon_model_path), exist_ok=True)
