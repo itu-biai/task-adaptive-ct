@@ -21,7 +21,6 @@ The project consists of four main components:
 ├── dataset/
 │   ├── create_numpy_dataset.py         # Dataset creation and preprocessing
 │   ├── parallel-numpy-dataset.py       # Parallel dataset creation
-│   └── visualize_samples.py            # Dataset visualization tools
 ├── inference/
 │   ├── bounding-box.py                 # Interactive ROI analysis
 │   ├── segmentation_inference.py       # Comprehensive segmentation evaluation
@@ -84,9 +83,6 @@ python dataset/create_numpy_dataset.py
 
 # For faster processing with parallel execution
 python dataset/parallel-numpy-dataset.py
-
-# Visualize samples from the dataset
-python dataset/visualize_samples.py
 ```
 
 ### 2. Model Training
