@@ -162,8 +162,8 @@ The models are evaluated using:
 
 The following baseline methods are compared:
 - **Low-dose images** (input)
-- **FBP reconstruction** (Filtered Back Projection)
-- **BM3D denoising**
+- **FBP reconstruction (Filtered Back Projection)**
+- **BM3D denoising (Block-Matching and 3D Filtering)**
 - **Base U-Net reconstruction**
 - **Joint training reconstruction**
 - **Task-adaptive reconstruction**
