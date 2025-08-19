@@ -215,4 +215,4 @@ If you use this code in your research, please consider citing:
 
 ## Contact
 
-For questions and feedback, please open an issue in the GitHub repository.
+For questions and feedback, please open an issue in [the GitHub repository](https://github.com/itu-biai/task_adaptive_ct/issues).
