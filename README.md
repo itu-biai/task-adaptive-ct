@@ -162,8 +162,8 @@ The models are evaluated using:
 
 The following baseline methods are compared:
 - **Low-dose images** (input)
-- **FBP reconstruction** (Filtered Back Projection)
-- **BM3D denoising** (Block-Matching and 3D Filtering)
+- **FBP reconstruction (Filtered Back Projection)**
+- **BM3D denoising (Block-Matching and 3D Filtering)**
 - **Base U-Net reconstruction**
 - **Joint training reconstruction**
 - **Task-adaptive reconstruction**
@@ -215,4 +215,4 @@ If you use this code in your research, please consider citing:
 
 ## Contact
 
-For questions and feedback, please open an issue in [the GitHub repository](https://github.com/itu-biai/task_adaptive_ct/issues).
+For questions and feedback, please open an issue in the GitHub repository.
