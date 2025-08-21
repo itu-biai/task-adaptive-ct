@@ -43,12 +43,12 @@ CONFIG = {
     'min_epochs': 25,  # Minimum epochs before early stopping can trigger
     
     # Dataset directories
-    'low_dose_dir': '/YEREL/dataset/low_dose',
-    'full_dose_dir': '/YEREL/dataset/full_dose',
-    'seg_dir': '/YEREL/dataset/segmentation_slices',
+    'low_dose_dir': '.../low_dose',
+    'full_dose_dir': '.../full_dose',
+    'seg_dir': '.../segmentation_slices',
     
     # Output directory for plots and logs
-    'output_dir': '/ari/users/nsefercioglu/training-logs/joint-training',
+    'output_dir': '.../training-logs/joint-training',
     
     # Loss parameters
     'criterion_mse': nn.MSELoss(),
@@ -643,15 +643,15 @@ save_training_plots()
 # Save model weights with timestamp
 timestamped_recon_name = f'joint_recon_unet_{timestamp}.pth'
 timestamped_seg_name = f'joint_seg_unet_{timestamp}.pth'
-recon_model_path = f'/ari/users/nsefercioglu/model-weights/joint-training/recon_unet/{timestamped_recon_name}'
-seg_model_path = f'/ari/users/nsefercioglu/model-weights/joint-training/seg_unet/{timestamped_seg_name}'
+recon_model_path = f'.../model-weights/joint-training/recon_unet/{timestamped_recon_name}'
+seg_model_path = f'.../model-weights/joint-training/seg_unet/{timestamped_seg_name}'
 
 # Create model weights directory if it doesn't exist
 os.makedirs(os.path.dirname(recon_model_path), exist_ok=True)
 torch.save(recon_model.state_dict(), recon_model_path)
 torch.save(seg_model.state_dict(), seg_model_path)
 
-torch.save(recon_model.state_dict(), '/ari/users/nsefercioglu/model-weights/latest-weights/joint_training.pth')
+torch.save(recon_model.state_dict(), '.../model-weights/latest-weights/joint_training.pth')
 
 log_and_print(f"Reconstruction model saved to: {recon_model_path}")
 log_and_print(f"Segmentation model saved to: {seg_model_path}")
