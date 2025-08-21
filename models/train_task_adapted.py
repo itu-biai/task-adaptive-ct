@@ -43,15 +43,15 @@ CONFIG = {
     'min_epochs': 25,  # Minimum epochs before early stopping can trigger
     
     # Dataset directories
-    'low_dose_dir': '/YEREL/dataset/low_dose',
-    'full_dose_dir': '/YEREL/dataset/full_dose',
-    'seg_dir': '/YEREL/dataset/segmentation_slices',
+    'low_dose_dir': '.../dataset/low_dose',
+    'full_dose_dir': '.../dataset/full_dose',
+    'seg_dir': '.../dataset/segmentation_slices',
     
     # Pretrained model paths
-    'seg_model_path': '/ari/users/nsefercioglu/model-weights/latest-weights/seg-unet.pth',
+    'seg_model_path': '.../model-weights/latest-weights/seg-unet.pth',
     
     # Output directory for plots and logs
-    'output_dir': '/ari/users/nsefercioglu/training-logs/task-adaptive',
+    'output_dir': '.../training-logs/task-adaptive',
     
     # Loss parameters
     'criterion_mse': nn.MSELoss(),
@@ -635,12 +635,12 @@ task_adaptive_model = recon_model
 
 # Save model weights with timestamp
 timestamped_model_name = f'task_adaptive_unet_{timestamp}.pth'
-original_model_path = f'/ari/users/nsefercioglu/model-weights/task-adaptive/{timestamped_model_name}'
+original_model_path = f'.../model-weights/task-adaptive/{timestamped_model_name}'
 
 # Create model weights directory if it doesn't exist
 os.makedirs(os.path.dirname(original_model_path), exist_ok=True)
 torch.save(task_adaptive_model.state_dict(), original_model_path)
-torch.save(task_adaptive_model.state_dict(), '/ari/users/nsefercioglu/model-weights/latest-weights/task-adaptive.pth')
+torch.save(task_adaptive_model.state_dict(), '.../model-weights/latest-weights/task-adaptive.pth')
 
 log_and_print(f"Model saved to: {original_model_path}")
 
