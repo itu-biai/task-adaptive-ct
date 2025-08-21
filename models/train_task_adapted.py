@@ -40,22 +40,51 @@ CONFIG = {
     
     # Early stopping parameters
     'patience': 10,  # Wait 10 epochs without improvement
+    'min_epochs': 25,  # Minimum epochs before early stopping can trigger
     
     # Dataset directories
-    'low_dose_dir': '.../dataset/low_dose',
-    'full_dose_dir': '.../dataset/full_dose',
-    'seg_dir': '.../dataset/segmentation_slices',
+    'low_dose_dir': '/YEREL/dataset/low_dose',
+    'full_dose_dir': '/YEREL/dataset/full_dose',
+    'seg_dir': '/YEREL/dataset/segmentation_slices',
     
     # Pretrained model paths
-    'seg_model_path': '.../model-weights/seg-unet/seg_unet.pth',
+    'seg_model_path': '/ari/users/nsefercioglu/model-weights/latest-weights/seg-unet.pth',
     
     # Output directory for plots and logs
-    'output_dir': '.../training-logs/task-adaptive',
+    'output_dir': '/ari/users/nsefercioglu/training-logs/task-adaptive',
     
     # Loss parameters
     'criterion_mse': nn.MSELoss(),
     'alpha': 0.5  # Weight for Dice loss (1-alpha for MSE loss)
 }
+
+"""#### Dice Loss"""
+
+class DiceLoss(nn.Module):
+    def __init__(self, num_classes, eps=1e-6):
+        super(DiceLoss, self).__init__()
+        self.num_classes = num_classes
+        self.eps = eps
+
+    def forward(self, pred_logits, target):
+        """
+        pred_logits: Logits from the model, shape [B, C, H, W]
+        target: Ground truth labels, shape [B, H, W]
+        """
+        pred_probs = torch.softmax(pred_logits, dim=1)
+        
+        target_one_hot = torch.nn.functional.one_hot(target, num_classes=self.num_classes).permute(0, 3, 1, 2).float()
+
+        intersection = (pred_probs * target_one_hot).sum(dim=[2, 3])
+        pred_sum = pred_probs.sum(dim=[2, 3])
+        target_sum = target_one_hot.sum(dim=[2, 3])
+
+        dice_score = (2. * intersection + self.eps) / (pred_sum + target_sum + self.eps)
+        
+        return 1 - dice_score.mean()
+
+# Hardcode DiceLoss instantiation
+criterion_dice = DiceLoss(num_classes=CONFIG['num_classes'])
 
 """#### Output Directory and Logging Setup"""
 
@@ -74,6 +103,7 @@ config_path = os.path.join(run_dir, "config.json")
 config_to_save = CONFIG.copy()
 # Convert non-serializable objects to strings
 config_to_save['criterion_mse'] = str(CONFIG['criterion_mse'])
+config_to_save['criterion_dice'] = str(criterion_dice)
 with open(config_path, 'w') as f:
     json.dump(config_to_save, f, indent=2)
 
@@ -85,12 +115,15 @@ training_history = {
     'train_dice_loss': [],
     'val_psnr': [],
     'val_ssim': [],
+    'val_dice': [],
     'learning_rate': [],
     'best_epoch': 0,
     'best_ssim': -1.0,
     'best_psnr': -1.0,
+    'best_dice': -1.0,
     'best_ssim_std': 0.0,
-    'best_psnr_std': 0.0
+    'best_psnr_std': 0.0,
+    'best_dice_std': 0.0
 }
 
 # Initialize log file
@@ -262,7 +295,7 @@ def masked_ssim_metric(pred, target, mask):
     masked_target = target * mask_tensor
     return ssim_metric(masked_pred, masked_target)
 
-"""#### Dice Loss"""
+"""#### Dice Metric"""
 
 # Dice calculation
 def calculate_dice(pred, target, num_classes=3, threshold=0.5, eps=1e-6):
@@ -431,6 +464,7 @@ else:
     raise ValueError(f"Unsupported optimizer: {CONFIG['optimizer']}")
 
 criterion_mse = CONFIG['criterion_mse']
+# criterion_dice is already defined above
 
 # Setup learning rate scheduler
 scheduler = None
@@ -485,7 +519,7 @@ for epoch in range(CONFIG['num_epochs']):
     for low_dose, full_dose, seg_map in train_loader:
         low_dose = low_dose.to(device)
         full_dose = full_dose.to(device)
-        seg_map = seg_map.to(device)
+        seg_map = seg_map.to(device).squeeze(1) # Squeeze the channel dimension, shape -> [B, H, W]
 
         optimizer.zero_grad()
 
@@ -495,8 +529,7 @@ for epoch in range(CONFIG['num_epochs']):
 
         # Segmentation regularization
         predicted_seg = seg_model(reconstructed)  # [B, 3, H, W] logits
-        dice_per_case = calculate_dice(predicted_seg, seg_map, num_classes=CONFIG['num_classes'])
-        dice_loss = 1 - dice_per_case.mean()
+        dice_loss = criterion_dice(predicted_seg, seg_map)
 
         # Combined loss with alpha weighting
         total_loss = (1 - CONFIG['alpha']) * mse_loss + CONFIG['alpha'] * dice_loss
@@ -515,17 +548,26 @@ for epoch in range(CONFIG['num_epochs']):
     recon_model.eval()
     psnr_scores = []
     ssim_scores = []
+    dice_per_case_scores = []
     with torch.no_grad():
         for low_dose, full_dose, seg_map in test_loader:
             low_dose = low_dose.to(device)
             full_dose = full_dose.to(device)
+            seg_map = seg_map.to(device).squeeze(1)  # [B, H, W] for segmentation
             reconstructed = recon_model(low_dose)
+            # Reconstruction metrics
             psnr_scores.extend(masked_psnr_metric(reconstructed, full_dose, mask))
             ssim_scores.extend(masked_ssim_metric(reconstructed, full_dose, mask))
+            # Segmentation metrics using frozen segmentation model
+            predicted_seg = seg_model(reconstructed)  # [B, 3, H, W] logits
+            dice_scores = calculate_dice(predicted_seg, seg_map, num_classes=CONFIG['num_classes'])
+            dice_per_case_scores.extend(dice_scores.cpu().numpy())
     avg_psnr = np.mean(psnr_scores)
     avg_ssim = np.mean(ssim_scores)
     std_psnr = np.std(psnr_scores)
     std_ssim = np.std(ssim_scores)
+    avg_dice_per_case = np.mean(dice_per_case_scores)
+    std_dice_per_case = np.std(dice_per_case_scores)
 
     # Get current learning rate for display
     current_lr = optimizer.param_groups[0]['lr']
@@ -537,11 +579,14 @@ for epoch in range(CONFIG['num_epochs']):
     training_history['train_dice_loss'].append(train_dice_loss)
     training_history['val_psnr'].append(avg_psnr)
     training_history['val_ssim'].append(avg_ssim)
+    training_history['val_dice'].append(avg_dice_per_case)
     training_history['learning_rate'].append(current_lr)
     
-    # Early stopping logic
-    if avg_ssim > best_ssim:
+    # Early stopping logic based on combined metric (0.5 * SSIM + 0.5 * Dice)
+    combined_metric = 0.5 * avg_ssim + 0.5 * avg_dice_per_case
+    if combined_metric > (0.5 * best_ssim + 0.5 * training_history.get('best_dice', -1.0)):
         best_ssim = avg_ssim
+        training_history['best_dice'] = avg_dice_per_case
         best_model_state = recon_model.state_dict().copy()
         epochs_without_improvement = 0
         training_history['best_epoch'] = epoch + 1
@@ -549,34 +594,36 @@ for epoch in range(CONFIG['num_epochs']):
         training_history['best_psnr'] = avg_psnr
         training_history['best_ssim_std'] = std_ssim
         training_history['best_psnr_std'] = std_psnr
+        training_history['best_dice_std'] = std_dice_per_case
         log_and_print(f"Epoch [{epoch+1}/{CONFIG['num_epochs']}], Total Loss: {train_loss:.4f}, MSE: {train_mse_loss:.4f}, "
               f"Dice: {train_dice_loss:.4f}, LR: {current_lr:.2e}, "
               f"Task-Adaptive -> Masked PSNR: {avg_psnr:.4f} ± {std_psnr:.4f}, "
-              f"Masked SSIM: {avg_ssim:.4f} ± {std_ssim:.4f} (NEW BEST!)")
+              f"Masked SSIM: {avg_ssim:.4f} ± {std_ssim:.4f}, Val Dice: {avg_dice_per_case:.4f} ± {std_dice_per_case:.4f} (NEW BEST!)")
     else:
         epochs_without_improvement += 1
         log_and_print(f"Epoch [{epoch+1}/{CONFIG['num_epochs']}], Total Loss: {train_loss:.4f}, MSE: {train_mse_loss:.4f}, "
               f"Dice: {train_dice_loss:.4f}, LR: {current_lr:.2e}, "
               f"Task-Adaptive -> Masked PSNR: {avg_psnr:.4f} ± {std_psnr:.4f}, "
-              f"Masked SSIM: {avg_ssim:.4f} ± {std_ssim:.4f} (No improvement: {epochs_without_improvement}/{CONFIG['patience']})")
+              f"Masked SSIM: {avg_ssim:.4f} ± {std_ssim:.4f}, Val Dice: {avg_dice_per_case:.4f} ± {std_dice_per_case:.4f} "
+              f"(No improvement: {epochs_without_improvement}/{CONFIG['patience']})")
     
     # Update learning rate scheduler
     if scheduler is not None:
         if CONFIG['scheduler_type'] == 'ReduceLROnPlateau':
-            scheduler.step(avg_ssim)  # Step with SSIM for plateau detection
+            scheduler.step(combined_metric)  # Step with combined metric for plateau detection
         else:
             scheduler.step()  # Step with epoch for other schedulers
     
-    # Check early stopping condition
-    if epochs_without_improvement >= CONFIG['patience']:
-        log_and_print(f"\nEarly stopping triggered! No improvement in SSIM for {CONFIG['patience']} epochs.")
-        log_and_print(f"Loading best model with SSIM: {best_ssim:.4f}")
+    # Check early stopping condition (only after minimum epochs)
+    if epoch + 1 >= CONFIG['min_epochs'] and epochs_without_improvement >= CONFIG['patience']:
+        log_and_print(f"\nEarly stopping triggered! No improvement in combined metric for {CONFIG['patience']} epochs after minimum {CONFIG['min_epochs']} epochs.")
+        log_and_print(f"Loading best model with SSIM: {best_ssim:.4f}, Dice: {training_history['best_dice']:.4f}")
         recon_model.load_state_dict(best_model_state)
         break
 
 # If training completed without early stopping, use the best model found
 if best_model_state is not None and epochs_without_improvement < CONFIG['patience']:
-    log_and_print(f"\nTraining completed. Loading best model with SSIM: {best_ssim:.4f}")
+    log_and_print(f"\nTraining completed. Loading best model with SSIM: {best_ssim:.4f}, Dice: {training_history['best_dice']:.4f}")
     recon_model.load_state_dict(best_model_state)
 
 # Save final plots
@@ -588,11 +635,12 @@ task_adaptive_model = recon_model
 
 # Save model weights with timestamp
 timestamped_model_name = f'task_adaptive_unet_{timestamp}.pth'
-original_model_path = f'.../model-weights/task-adaptive/{timestamped_model_name}'
+original_model_path = f'/ari/users/nsefercioglu/model-weights/task-adaptive/{timestamped_model_name}'
 
 # Create model weights directory if it doesn't exist
 os.makedirs(os.path.dirname(original_model_path), exist_ok=True)
 torch.save(task_adaptive_model.state_dict(), original_model_path)
+torch.save(task_adaptive_model.state_dict(), '/ari/users/nsefercioglu/model-weights/latest-weights/task-adaptive.pth')
 
 log_and_print(f"Model saved to: {original_model_path}")
 
@@ -601,16 +649,25 @@ log_and_print("\nCalculating final metrics with best model...")
 task_adaptive_model.eval()
 final_psnr_scores = []
 final_ssim_scores = []
+final_dice_scores = []
 with torch.no_grad():
     for low_dose, full_dose, seg_map in test_loader:
         low_dose, full_dose = low_dose.to(device), full_dose.to(device)
+        seg_map = seg_map.to(device).squeeze(1)  # [B, H, W] for segmentation
         reconstructed = task_adaptive_model(low_dose)
+        # Reconstruction metrics
         final_psnr_scores.extend(masked_psnr_metric(reconstructed, full_dose, mask))
         final_ssim_scores.extend(masked_ssim_metric(reconstructed, full_dose, mask))
+        # Segmentation metrics using frozen segmentation model
+        predicted_seg = seg_model(reconstructed)  # [B, 3, H, W] logits
+        dice_scores = calculate_dice(predicted_seg, seg_map, num_classes=CONFIG['num_classes'])
+        final_dice_scores.extend(dice_scores.cpu().numpy())
 final_avg_psnr = np.mean(final_psnr_scores)
 final_avg_ssim = np.mean(final_ssim_scores)
+final_avg_dice = np.mean(final_dice_scores)
 final_std_psnr = np.std(final_psnr_scores)
 final_std_ssim = np.std(final_ssim_scores)
+final_std_dice = np.std(final_dice_scores)
 
 # Calculate baseline low-dose metrics
 log_and_print("Calculating baseline low-dose metrics...")
@@ -626,14 +683,35 @@ lowdose_avg_ssim = np.mean(lowdose_ssim_scores)
 lowdose_std_psnr = np.std(lowdose_psnr_scores)
 lowdose_std_ssim = np.std(lowdose_ssim_scores)
 
+# Convert training history to JSON-serializable format
+json_training_history = {
+    'epoch': [int(x) for x in training_history['epoch']],
+    'train_loss': [float(x) for x in training_history['train_loss']],
+    'train_mse_loss': [float(x) for x in training_history['train_mse_loss']],
+    'train_dice_loss': [float(x) for x in training_history['train_dice_loss']],
+    'val_psnr': [float(x) for x in training_history['val_psnr']],
+    'val_ssim': [float(x) for x in training_history['val_ssim']],
+    'val_dice': [float(x) for x in training_history['val_dice']],
+    'learning_rate': [float(x) for x in training_history['learning_rate']],
+    'best_epoch': int(training_history['best_epoch']),
+    'best_ssim': float(training_history['best_ssim']),
+    'best_psnr': float(training_history['best_psnr']),
+    'best_dice': float(training_history['best_dice']),
+    'best_ssim_std': float(training_history['best_ssim_std']),
+    'best_psnr_std': float(training_history['best_psnr_std']),
+    'best_dice_std': float(training_history['best_dice_std'])
+}
+
 # Save training history and final results
 results_summary = {
-    'training_history': training_history,
+    'training_history': json_training_history,
     'final_metrics': {
         'psnr_mean': float(final_avg_psnr),
         'psnr_std': float(final_std_psnr),
         'ssim_mean': float(final_avg_ssim),
-        'ssim_std': float(final_std_ssim)
+        'ssim_std': float(final_std_ssim),
+        'dice_mean': float(final_avg_dice),
+        'dice_std': float(final_std_dice)
     },
     'lowdose_baseline': {
         'psnr_mean': float(lowdose_avg_psnr),
@@ -641,9 +719,9 @@ results_summary = {
         'ssim_mean': float(lowdose_avg_ssim),
         'ssim_std': float(lowdose_std_ssim)
     },
-    'best_epoch': training_history['best_epoch'],
-    'total_epochs_trained': len(training_history['epoch']),
-    'early_stopped': len(training_history['epoch']) < CONFIG['num_epochs'],
+    'best_epoch': int(json_training_history['best_epoch']),
+    'total_epochs_trained': len(json_training_history['epoch']),
+    'early_stopped': len(json_training_history['epoch']) < CONFIG['num_epochs'],
     'alpha_weight': CONFIG['alpha']
 }
 
@@ -662,6 +740,7 @@ log_and_print(f"Total epochs trained: {len(training_history['epoch'])}/{CONFIG['
 log_and_print(f"Best epoch: {training_history['best_epoch']}")
 log_and_print(f"Best SSIM: {training_history['best_ssim']:.4f} ± {training_history['best_ssim_std']:.4f}")
 log_and_print(f"Best PSNR: {training_history['best_psnr']:.4f} ± {training_history['best_psnr_std']:.4f}")
+log_and_print(f"Best Dice: {training_history['best_dice']:.4f} ± {training_history['best_dice_std']:.4f}")
 log_and_print(f"Early stopping: {'Yes' if len(training_history['epoch']) < CONFIG['num_epochs'] else 'No'}")
 log_and_print(f"Final learning rate: {training_history['learning_rate'][-1]:.2e}")
 log_and_print(f"Alpha weight (MSE vs Dice): {CONFIG['alpha']:.2f}")
@@ -680,7 +759,7 @@ def visualize_task_adaptive_results(recon_model, seg_model, test_dataset, mask, 
     # Reshape tensors to add batch dimension
     low_dose = low_dose.unsqueeze(0).to(device)    # [1, 1, H, W]
     full_dose = full_dose.unsqueeze(0).to(device)  # [1, 1, H, W]
-    gt_seg = gt_seg.to(device)                     # [1, H, W]
+    gt_seg = gt_seg.squeeze(0).to(device)          # [H, W], remove channel dim for Dice calculation
 
     # Generate reconstructed image using the reconstruction model
     with torch.no_grad():
@@ -693,7 +772,7 @@ def visualize_task_adaptive_results(recon_model, seg_model, test_dataset, mask, 
     ssim_lowdose = masked_ssim_metric(low_dose, full_dose, mask)[0]
     psnr_recon = masked_psnr_metric(reconstructed, full_dose, mask)[0]
     ssim_recon = masked_ssim_metric(reconstructed, full_dose, mask)[0]
-    dice_score = calculate_dice(pred_seg_logits, gt_seg, num_classes=3)[0].item()
+    dice_score = calculate_dice(pred_seg_logits, gt_seg.unsqueeze(0), num_classes=3)[0].item()
 
     # Convert tensors to numpy arrays for plotting
     low_dose_np = low_dose.squeeze(0).cpu().numpy().squeeze(0)      # [H, W]
