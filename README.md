@@ -15,34 +15,40 @@ The project consists of four main components:
 ```
 .
 ├── benchmarks/
-│   ├── benchmarks.py                   # Performance evaluation scripts
-│   ├── parallel_benchmarks.py          # Parallel version for faster processing
-│   └── benchmark_results.txt           # Benchmark results
+│   ├── benchmarks.py              # Performance evaluation scripts
+│   ├── parallel_benchmarks.py     # Parallel version for faster processing
+│   └── benchmark_results.txt      # Benchmark results
 ├── dataset/
-│   ├── create_numpy_dataset.py         # Dataset creation and preprocessing
-│   ├── parallel-numpy-dataset.py       # Parallel dataset creation
+│   ├── create_numpy_dataset.py    # Dataset creation and preprocessing
+│   ├── parallel-numpy-dataset.py  # Parallel dataset creation
+│   └── visualize_samples.py       # Dataset visualization tools
 ├── inference/
-│   ├── bounding-box.py                 # Interactive ROI analysis
-│   ├── segmentation_inference.py       # Comprehensive segmentation evaluation
-│   └── segmentation_task_adaptive.py   # Task-adaptive segmentation inference
-│   └── segmentation_joint_training.py  # Joint training segmentation inference
+│   ├── bounding-box.py            # Interactive ROI analysis
+│   ├── segmentation_inference.py  # Comprehensive segmentation evaluation
+│   └── segmentation_task_adaptive.py  # Task-adaptive segmentation inference
 ├── models/
-│   ├── train_base_unet.py              # Base U-Net reconstruction model
-│   ├── train_seg_unet.py               # Segmentation U-Net model
-│   ├── train_task_adapted.py           # Task-adaptive reconstruction model
-│   └── joint_training_model.py         # Joint reconstruction and segmentation training
-├── LICENSE                             # GPL v3.0 license
-├── requirements.txt                    # Python dependencies
-└── .gitignore                          # Git ignore file
+│   ├── train_base_unet.py         # Base U-Net reconstruction model
+│   ├── train_seg_unet.py          # Segmentation U-Net model
+│   ├── train_task_adapted.py      # Task-adaptive reconstruction model
+│   └── joint_training_model.py    # Joint reconstruction and segmentation training
+├── LICENSE                        # GPL v3.0 license
+├── requirements.txt               # Python dependencies
+└── .gitignore                     # Git ignore file
 ```
 
-## Features
+## Key Features
 
 - **Low-dose Simulation**: Realistic simulation of low-dose CT using Poisson noise in the Radon domain
 - **Image Reconstruction**: U-Net based architecture for high-quality image reconstruction
 - **Segmentation**: Multi-class segmentation with 3 target classes
 - **Task-Adaptive Learning**: Reconstruction model optimized using both image quality and segmentation accuracy metrics
 - **Evaluation Metrics**: PSNR and SSIM for reconstruction quality; Dice coefficient for segmentation accuracy
+- **Modular Design**: Separate training scripts for different approaches
+- **Comprehensive Evaluation**: Multiple reconstruction methods compared
+- **Parallel Processing**: Support for faster dataset creation and benchmarking
+- **Interactive Analysis**: Tools for ROI-based evaluation
+- **Automatic Logging**: Result visualization and tracking
+- **Reproducible Training**: Configurable random seeds
 
 ## Installation
 
@@ -71,9 +77,16 @@ The project dependencies are listed in `requirements.txt`:
 - scipy for scientific computing
 - tqdm for progress bars
 
-## Usage
+## Configuration
 
-**Note**: Before running any scripts, you'll need to update the dataset paths in the configuration sections of each script to point to your local data directories.
+Before running any scripts, you need to configure the environment. All scripts use configuration sections at the top of each file. Key parameters to adjust:
+
+- **Dataset paths**: Update `low_dose_dir`, `full_dose_dir`, `seg_dir` to your data locations
+- **Training parameters**: Adjust `batch_size`, `learning_rate`, `num_epochs` as needed
+- **Model parameters**: Configure `num_classes`, loss weights, etc.
+- **Output paths**: Set directories for saving models, logs, and results
+
+## Usage
 
 ### 1. Dataset Preparation
 
@@ -83,6 +96,9 @@ python dataset/create_numpy_dataset.py
 
 # For faster processing with parallel execution
 python dataset/parallel-numpy-dataset.py
+
+# Visualize samples from the dataset
+python dataset/visualize_samples.py
 ```
 
 ### 2. Model Training
@@ -122,9 +138,6 @@ python inference/segmentation_inference.py
 
 # Task-adaptive segmentation inference
 python inference/segmentation_task_adaptive.py
-
-# Joint training segmentation inference
-python inference/segmentation_joint_training.py
 ```
 
 ## Model Architecture
@@ -163,7 +176,7 @@ The models are evaluated using:
 The following baseline methods are compared:
 - **Low-dose images** (input)
 - **FBP reconstruction** (Filtered Back Projection)
-- **BM3D denoising** (Block-Matching and 3D Filtering)
+- **BM3D denoising**
 - **Base U-Net reconstruction**
 - **Joint training reconstruction**
 - **Task-adaptive reconstruction**
@@ -174,23 +187,7 @@ Results are automatically saved to `benchmarks/benchmark_results.txt`.
 
 Pre-trained model weights are not included in this repository. You can train the models using the provided scripts. Training logs and model checkpoints will be saved with timestamps for version control.
 
-## Configuration
 
-All scripts use configuration sections at the top of each file. Key parameters to adjust:
-
-- **Dataset paths**: Update `low_dose_dir`, `full_dose_dir`, `seg_dir` to your data locations
-- **Training parameters**: Adjust `batch_size`, `learning_rate`, `num_epochs` as needed
-- **Model parameters**: Configure `num_classes`, loss weights, etc.
-- **Output paths**: Set directories for saving models, logs, and results
-
-## Features
-
-- **Modular design** with separate training scripts for different approaches
-- **Comprehensive evaluation** with multiple reconstruction methods
-- **Parallel processing** support for faster dataset creation and benchmarking
-- **Interactive analysis** tools for ROI-based evaluation
-- **Automatic logging** and result visualization
-- **Reproducible training** with configurable random seeds
 
 ## License
 
