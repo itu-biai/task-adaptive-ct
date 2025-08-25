@@ -11,6 +11,19 @@ from torch.utils.data import Dataset, DataLoader, random_split, Subset
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 from datetime import datetime
 import json
+import argparse
+import copy
+
+"""#### CLI Arguments"""
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Task-Adaptive Training for CT Reconstruction')
+    parser.add_argument('--alpha', type=float, default=0.5, 
+                        help='Weight for Dice loss (1-alpha for MSE loss). Default: 0.5')
+    return parser.parse_args()
+
+# Parse command line arguments
+args = parse_args()
 
 """#### CONFIG"""
 
@@ -40,22 +53,22 @@ CONFIG = {
     
     # Early stopping parameters
     'patience': 10,  # Wait 10 epochs without improvement
-    'min_epochs': 25,  # Minimum epochs before early stopping can trigger
+    'min_epochs': 20,  # Minimum epochs before early stopping can trigger
     
     # Dataset directories
-    'low_dose_dir': '.../dataset/low_dose',
-    'full_dose_dir': '.../dataset/full_dose',
-    'seg_dir': '.../dataset/segmentation_slices',
+    'low_dose_dir': '/YEREL/dataset/low_dose',
+    'full_dose_dir': '/YEREL/dataset/full_dose',
+    'seg_dir': '/YEREL/dataset/segmentation_slices',
     
     # Pretrained model paths
-    'seg_model_path': '.../model-weights/latest-weights/seg-unet.pth',
+    'seg_model_path': '/ari/users/nsefercioglu/model-weights/seg_unet.pth',
     
-    # Output directory for plots and logs
-    'output_dir': '.../training-logs/task-adaptive',
+    # Output directory for plots and logs (will be updated with alpha value)
+    'output_dir': f'/ari/users/nsefercioglu/logs/task-adaptive-alpha{str(args.alpha).replace(".", "")}',
     
     # Loss parameters
     'criterion_mse': nn.MSELoss(),
-    'alpha': 0.5  # Weight for Dice loss (1-alpha for MSE loss)
+    'alpha': args.alpha  # Weight for Dice loss (1-alpha for MSE loss) from CLI
 }
 
 """#### Dice Loss"""
@@ -91,12 +104,12 @@ criterion_dice = DiceLoss(num_classes=CONFIG['num_classes'])
 # Create output directory if it doesn't exist
 os.makedirs(CONFIG['output_dir'], exist_ok=True)
 
-# Create unique run directory with timestamp
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-run_dir = os.path.join(CONFIG['output_dir'], f"training_run_{timestamp}")
+# Use output directory directly (overwrites previous runs)
+run_dir = CONFIG['output_dir']
 os.makedirs(run_dir, exist_ok=True)
 
 print(f"Training outputs will be saved to: {run_dir}")
+print(f"Alpha parameter: {CONFIG['alpha']} (MSE weight: {1-CONFIG['alpha']}, Dice weight: {CONFIG['alpha']})")
 
 # Save configuration to run directory
 config_path = os.path.join(run_dir, "config.json")
@@ -124,6 +137,7 @@ training_history = {
     'best_ssim_std': 0.0,
     'best_psnr_std': 0.0,
     'best_dice_std': 0.0
+    , 'best_combined': -1.0
 }
 
 # Initialize log file
@@ -298,23 +312,31 @@ def masked_ssim_metric(pred, target, mask):
 """#### Dice Metric"""
 
 # Dice calculation
-def calculate_dice(pred, target, num_classes=3, threshold=0.5, eps=1e-6):
+def calculate_dice(pred, target, num_classes=3, eps=1e-6, mask=None):
+    """Argmax-based Dice (multi-class) & thresholded Dice (binary). Returns [B]."""
     if num_classes > 1:
-        pred = torch.softmax(pred, dim=1)
+        pred_labels = torch.argmax(pred, dim=1)  # [B, H, W]
+        if target.dim() == 4 and target.shape[1] == num_classes:
+            target_labels = torch.argmax(target, dim=1)
+        else:
+            target_labels = target
+        pred = torch.nn.functional.one_hot(pred_labels, num_classes).permute(0,3,1,2).float()
+        target = torch.nn.functional.one_hot(target_labels.long(), num_classes).permute(0,3,1,2).float()
     else:
         pred = torch.sigmoid(pred)
-    pred = (pred > threshold).float()
+        pred = (pred > 0.5).float()
+        if target.dim() == 3:
+            target = target.unsqueeze(1).float()
 
-    if target.dim() == 3:
-        target_one_hot = torch.zeros_like(pred)
-        for c in range(num_classes):
-            target_one_hot[:, c, :, :] = (target == c).float()
-        target = target_one_hot
+    if mask is not None:
+        mask_tensor = torch.from_numpy(mask).to(pred.device).view(1, 1, 512, 512)
+        mask_tensor = mask_tensor.expand(-1, pred.size(1), -1, -1)
+        pred = pred * mask_tensor
+        target = target * mask_tensor
 
-    intersection = (pred * target).sum(dim=[2, 3])
-    pred_sum = pred.sum(dim=[2, 3])
-    target_sum = target.sum(dim=[2, 3])
-
+    intersection = (pred * target).sum(dim=[2,3])
+    pred_sum = pred.sum(dim=[2,3])
+    target_sum = target.sum(dim=[2,3])
     dice_per_case = (2 * intersection + eps) / (pred_sum + target_sum + eps)
     mean_dice_per_case = dice_per_case.mean(dim=1)
     return mean_dice_per_case
@@ -504,9 +526,11 @@ mask = create_circular_mask(h=512, w=512, center=(256, 256), radius=256)
 # Early stopping variables
 best_ssim = -1.0
 epochs_without_improvement = 0
-best_model_state = None
+best_model_state = copy.deepcopy(recon_model.state_dict())
+best_combined_metric = -1.0
 
 log_and_print(f"\nStarting training for {CONFIG['num_epochs']} epochs...")
+log_and_print(f"Alpha parameter: {CONFIG['alpha']} (MSE weight: {1-CONFIG['alpha']}, Dice weight: {CONFIG['alpha']})")
 log_and_print(f"Device: {device}")
 log_and_print(f"Reconstruction model parameters: {sum(p.numel() for p in recon_model.parameters()):,}")
 log_and_print(f"Segmentation model parameters (frozen): {sum(p.numel() for p in seg_model.parameters()):,}")
@@ -560,7 +584,7 @@ for epoch in range(CONFIG['num_epochs']):
             ssim_scores.extend(masked_ssim_metric(reconstructed, full_dose, mask))
             # Segmentation metrics using frozen segmentation model
             predicted_seg = seg_model(reconstructed)  # [B, 3, H, W] logits
-            dice_scores = calculate_dice(predicted_seg, seg_map, num_classes=CONFIG['num_classes'])
+            dice_scores = calculate_dice(predicted_seg, seg_map, num_classes=CONFIG['num_classes'], mask=mask)
             dice_per_case_scores.extend(dice_scores.cpu().numpy())
     avg_psnr = np.mean(psnr_scores)
     avg_ssim = np.mean(ssim_scores)
@@ -584,17 +608,20 @@ for epoch in range(CONFIG['num_epochs']):
     
     # Early stopping logic based on combined metric (0.5 * SSIM + 0.5 * Dice)
     combined_metric = 0.5 * avg_ssim + 0.5 * avg_dice_per_case
-    if combined_metric > (0.5 * best_ssim + 0.5 * training_history.get('best_dice', -1.0)):
-        best_ssim = avg_ssim
+    if combined_metric > best_combined_metric:
+        # Update best metrics and save model state
+        best_combined_metric = combined_metric
+        best_ssim = avg_ssim  # Track best SSIM for accurate logging
         training_history['best_dice'] = avg_dice_per_case
-        best_model_state = recon_model.state_dict().copy()
+        training_history['best_dice_std'] = std_dice_per_case
+        best_model_state = copy.deepcopy(recon_model.state_dict())
         epochs_without_improvement = 0
         training_history['best_epoch'] = epoch + 1
         training_history['best_ssim'] = best_ssim
-        training_history['best_psnr'] = avg_psnr
         training_history['best_ssim_std'] = std_ssim
+        training_history['best_psnr'] = avg_psnr
         training_history['best_psnr_std'] = std_psnr
-        training_history['best_dice_std'] = std_dice_per_case
+        training_history['best_combined'] = best_combined_metric  # Record best combined metric
         log_and_print(f"Epoch [{epoch+1}/{CONFIG['num_epochs']}], Total Loss: {train_loss:.4f}, MSE: {train_mse_loss:.4f}, "
               f"Dice: {train_dice_loss:.4f}, LR: {current_lr:.2e}, "
               f"Task-Adaptive -> Masked PSNR: {avg_psnr:.4f} ± {std_psnr:.4f}, "
@@ -633,14 +660,13 @@ task_adaptive_model = recon_model
 
 """#### Final Results"""
 
-# Save model weights with timestamp
-timestamped_model_name = f'task_adaptive_unet_{timestamp}.pth'
-original_model_path = f'.../model-weights/task-adaptive/{timestamped_model_name}'
+# Save model weights with alpha-specific name
+model_name = f'task_adaptive_unet_alpha{str(CONFIG["alpha"]).replace(".", "")}.pth'
+original_model_path = f'/ari/users/nsefercioglu/model-weights/{model_name}'
 
 # Create model weights directory if it doesn't exist
 os.makedirs(os.path.dirname(original_model_path), exist_ok=True)
 torch.save(task_adaptive_model.state_dict(), original_model_path)
-torch.save(task_adaptive_model.state_dict(), '.../model-weights/latest-weights/task-adaptive.pth')
 
 log_and_print(f"Model saved to: {original_model_path}")
 
@@ -667,6 +693,32 @@ final_avg_ssim = np.mean(final_ssim_scores)
 final_avg_dice = np.mean(final_dice_scores)
 final_std_psnr = np.std(final_psnr_scores)
 final_std_ssim = np.std(final_ssim_scores)
+# ------------------------------------------------------------------------------
+# Quick verification: reload the saved reconstruction weights and recompute metrics
+# ------------------------------------------------------------------------------
+log_and_print("\nVerifying saved task-adaptive model by reloading from disk ...")
+reloaded_model = U_Net(in_channels=1, out_channels=1).to(device)
+reloaded_model.load_state_dict(torch.load(original_model_path, map_location=device))
+reloaded_model.eval()
+
+verify_psnr, verify_ssim, verify_dice = [], [], []
+with torch.no_grad():
+    for low_dose, full_dose, seg_map in test_loader:
+        low_dose, full_dose = low_dose.to(device), full_dose.to(device)
+        seg_map = seg_map.to(device).squeeze(1)
+        reconstructed = reloaded_model(low_dose)
+        verify_psnr.extend(masked_psnr_metric(reconstructed, full_dose, mask))
+        verify_ssim.extend(masked_ssim_metric(reconstructed, full_dose, mask))
+        pred_seg_logits = seg_model(reconstructed)
+        dice_scores = calculate_dice(pred_seg_logits, seg_map, num_classes=CONFIG['num_classes'], mask=mask)
+        verify_dice.extend(dice_scores.cpu().numpy())
+
+verify_avg_psnr = np.mean(verify_psnr)
+verify_avg_ssim = np.mean(verify_ssim)
+verify_avg_dice = np.mean(verify_dice)
+
+log_and_print(f"Reloaded model -> Masked PSNR: {verify_avg_psnr:.4f}, SSIM: {verify_avg_ssim:.4f}, Dice: {verify_avg_dice:.4f}")
+
 final_std_dice = np.std(final_dice_scores)
 
 # Calculate baseline low-dose metrics
@@ -699,7 +751,8 @@ json_training_history = {
     'best_dice': float(training_history['best_dice']),
     'best_ssim_std': float(training_history['best_ssim_std']),
     'best_psnr_std': float(training_history['best_psnr_std']),
-    'best_dice_std': float(training_history['best_dice_std'])
+    'best_dice_std': float(training_history['best_dice_std']),
+    'best_combined': float(training_history['best_combined'])
 }
 
 # Save training history and final results
@@ -722,7 +775,11 @@ results_summary = {
     'best_epoch': int(json_training_history['best_epoch']),
     'total_epochs_trained': len(json_training_history['epoch']),
     'early_stopped': len(json_training_history['epoch']) < CONFIG['num_epochs'],
-    'alpha_weight': CONFIG['alpha']
+    'alpha_weight': CONFIG['alpha'],
+    'model_paths': {
+        'reconstruction': original_model_path
+    },
+    'run_directory': run_dir
 }
 
 # Save results to JSON
@@ -772,7 +829,7 @@ def visualize_task_adaptive_results(recon_model, seg_model, test_dataset, mask, 
     ssim_lowdose = masked_ssim_metric(low_dose, full_dose, mask)[0]
     psnr_recon = masked_psnr_metric(reconstructed, full_dose, mask)[0]
     ssim_recon = masked_ssim_metric(reconstructed, full_dose, mask)[0]
-    dice_score = calculate_dice(pred_seg_logits, gt_seg.unsqueeze(0), num_classes=3)[0].item()
+    dice_score = calculate_dice(pred_seg_logits, gt_seg.unsqueeze(0), num_classes=3, mask=mask)[0].item()
 
     # Convert tensors to numpy arrays for plotting
     low_dose_np = low_dose.squeeze(0).cpu().numpy().squeeze(0)      # [H, W]
@@ -841,7 +898,7 @@ def visualize_task_adaptive_results(recon_model, seg_model, test_dataset, mask, 
         plt.show()
 
 # Create save path for the task-adaptive visualization
-task_adaptive_save_path = os.path.join(run_dir, "task_adaptive_visualization_sample_5.png")
+task_adaptive_save_path = os.path.join(run_dir, "task_adaptive_visualization.png")
 
 # Call the visualization function with the trained models
 visualize_task_adaptive_results(

@@ -6,12 +6,12 @@ from skimage.metrics import structural_similarity, peak_signal_noise_ratio
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import os
-from torchvision import transforms
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, random_split
 from datetime import datetime
 import json
+import copy
 
 """#### CONFIG"""
 
@@ -40,13 +40,14 @@ CONFIG = {
     
     # Early stopping parameters
     'patience': 10,  # Increased for longer training - wait 10 epochs without improvement
+    'min_epochs': 20,  # Enforce at least 20 epochs before early stopping
     
     # Dataset directories
-    'noisy_dir': '.../dataset/low_dose',
-    'clean_dir': '.../dataset/full_dose',
+    'noisy_dir': '/YEREL/dataset/low_dose',
+    'clean_dir': '/YEREL/dataset/full_dose',
     
     # Output directory for plots and logs
-    'output_dir': '.../training-logs/base-unet', 
+    'output_dir': '/ari/users/nsefercioglu/logs/base-unet', 
     
     # Loss parameters
     'criterion': nn.MSELoss()
@@ -57,9 +58,8 @@ CONFIG = {
 # Create output directory if it doesn't exist
 os.makedirs(CONFIG['output_dir'], exist_ok=True)
 
-# Create unique run directory with timestamp
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-run_dir = os.path.join(CONFIG['output_dir'], f"training_run_{timestamp}")
+# Use output directory directly (overwrites previous runs)
+run_dir = CONFIG['output_dir']
 os.makedirs(run_dir, exist_ok=True)
 
 print(f"Training outputs will be saved to: {run_dir}")
@@ -567,10 +567,7 @@ for epoch in range(CONFIG['num_epochs']):
         noisy, clean = noisy.to(device), clean.to(device)
         optimizer.zero_grad()
         output = model(noisy)
-        # Apply mask to both output and clean images
-        masked_output = output * mask_tensor
-        masked_clean = clean * mask_tensor
-        loss = criterion(masked_output, masked_clean)
+        loss = criterion(output, clean)
         loss.backward()
         optimizer.step()
         train_loss += loss.item()
@@ -604,7 +601,7 @@ for epoch in range(CONFIG['num_epochs']):
     # Early stopping logic
     if avg_ssim > best_ssim:
         best_ssim = avg_ssim
-        best_model_state = model.state_dict().copy()
+        best_model_state = copy.deepcopy(model.state_dict())
         epochs_without_improvement = 0
         training_history['best_epoch'] = epoch + 1
         training_history['best_ssim'] = best_ssim
@@ -630,7 +627,7 @@ for epoch in range(CONFIG['num_epochs']):
     # Training curves will be saved only at the end
     
     # Check early stopping condition
-    if epochs_without_improvement >= CONFIG['patience']:
+    if epoch + 1 >= CONFIG['min_epochs'] and epochs_without_improvement >= CONFIG['patience']:
         log_and_print(f"\nEarly stopping triggered! No improvement in SSIM for {CONFIG['patience']} epochs.")
         log_and_print(f"Loading best model with SSIM: {best_ssim:.4f}")
         model.load_state_dict(best_model_state)
@@ -646,9 +643,9 @@ save_training_plots()
 
 unet = model
 
-# Save model weights with timestamp to both locations
-timestamped_model_name = f'base_unet_reconstruction_{timestamp}.pth'
-original_model_path = f'.../model-weights/base-unet/{timestamped_model_name}'
+# Save model weights with constant name
+model_name = 'base_unet_reconstruction.pth'
+original_model_path = f'/ari/users/nsefercioglu/model-weights/{model_name}'
 
 torch.save(unet.state_dict(), original_model_path)
 
@@ -669,6 +666,30 @@ final_avg_psnr = np.mean(final_psnr_scores)
 final_avg_ssim = np.mean(final_ssim_scores)
 final_std_psnr = np.std(final_psnr_scores)
 final_std_ssim = np.std(final_ssim_scores)
+
+# ----------------------------------------------------------------------------------
+# Quick verification: reload the just-saved weights and confirm metrics are identical
+# ----------------------------------------------------------------------------------
+log_and_print("\nVerifying saved model by reloading from disk ...")
+reloaded_model = U_Net().to(device)
+reloaded_model.load_state_dict(torch.load(original_model_path, map_location=device))
+reloaded_model.eval()
+verify_psnr, verify_ssim = [], []
+with torch.no_grad():
+    for noisy, clean in test_loader:
+        noisy, clean = noisy.to(device), clean.to(device)
+        output = reloaded_model(noisy)
+        verify_psnr.extend(masked_psnr_metric(output, clean, mask))
+        verify_ssim.extend(masked_ssim_metric(output, clean, mask))
+verify_avg_psnr = np.mean(verify_psnr)
+verify_avg_ssim = np.mean(verify_ssim)
+
+log_and_print(f"Reloaded model -> Masked PSNR: {verify_avg_psnr:.4f}, SSIM: {verify_avg_ssim:.4f}")
+if np.isclose(verify_avg_psnr, final_avg_psnr) and np.isclose(verify_avg_ssim, final_avg_ssim):
+    log_and_print("Verification successful: saved model matches in-memory best model.")
+else:
+    log_and_print("WARNING: Reloaded model metrics differ! Check saving logic.")
+
 
 # Save training history and final results
 results_summary = {
@@ -781,7 +802,7 @@ def show_reconstruction_comparison(dataset, index, model_unet, device='cuda', sa
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Create save path for the reconstruction comparison image
-comparison_save_path = os.path.join(run_dir, "reconstruction_comparison_sample_5.png")
+comparison_save_path = os.path.join(run_dir, "reconstruction_comparison.png")
 
 show_reconstruction_comparison(
     dataset=test_dataset,

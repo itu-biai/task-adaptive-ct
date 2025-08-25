@@ -5,12 +5,12 @@ import numpy as np
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import os
-from torchvision import transforms
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader, random_split
 from datetime import datetime
 import json
+import copy
 
 """#### CONFIG"""
 
@@ -40,13 +40,14 @@ CONFIG = {
     
     # Early stopping parameters
     'patience': 10,  # Wait 10 epochs without improvement
+    'min_epochs': 20,  # Minimum epochs before early stopping can trigger
     
     # Dataset directories
-    'image_dir': '.../dataset/full_dose',
-    'mask_dir': '.../dataset/segmentation_slices',
+    'image_dir': '/YEREL/dataset/full_dose',
+    'mask_dir': '/YEREL/dataset/segmentation_slices',
     
     # Output directory for plots and logs
-    'output_dir': '.../training-logs/segmentation-unet', 
+    'output_dir': '/ari/users/nsefercioglu/logs/segmentation-unet', 
     
     # Loss parameters
     'criterion': nn.CrossEntropyLoss()
@@ -57,9 +58,8 @@ CONFIG = {
 # Create output directory if it doesn't exist
 os.makedirs(CONFIG['output_dir'], exist_ok=True)
 
-# Create unique run directory with timestamp
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-run_dir = os.path.join(CONFIG['output_dir'], f"training_run_{timestamp}")
+# Use output directory directly (overwrites previous runs)
+run_dir = CONFIG['output_dir']
 os.makedirs(run_dir, exist_ok=True)
 
 print(f"Training outputs will be saved to: {run_dir}")
@@ -226,38 +226,54 @@ test_loader = DataLoader(
     num_workers=CONFIG['num_workers']
 )
 
+"""#### Circular Mask"""
+
+def create_circular_mask(h, w, center=None, radius=None):
+    if center is None:  # Use the center of the image
+        center = (w // 2, h // 2)
+    if radius is None:  # Use half the image width
+        radius = min(w, h) / 2
+
+    Y, X = np.ogrid[:h, :w]
+    dist_from_center = np.sqrt((X - center[0])**2 + (Y - center[1])**2)
+    mask = dist_from_center <= radius
+    return mask.astype(np.float32)  # Shape: (H, W)
+
+# Create circular mask
+mask = create_circular_mask(h=512, w=512, center=(256, 256), radius=256)
+
 """#### Dice Metric"""
 
-def calculate_dice(pred, target, num_classes=2, threshold=0.5, eps=1e-6):
-    # If pred is logits, apply softmax or sigmoid
+def calculate_dice(pred, target, num_classes=3, threshold=0.5, eps=1e-6, mask=None):
+    """Argmax-based Dice for multi-class segmentation; thresholded for binary."""
     if num_classes > 1:
-        pred = torch.softmax(pred, dim=1)  # For multi-class, softmax over channel dimension
+        # Convert logits to class labels via argmax
+        pred_labels = torch.argmax(pred, dim=1)  # [B, H, W]
+        if target.dim() == 4 and target.shape[1] == num_classes:
+            target_labels = torch.argmax(target, dim=1)
+        else:
+            target_labels = target
+        pred = torch.nn.functional.one_hot(pred_labels, num_classes).permute(0,3,1,2).float()
+        target = torch.nn.functional.one_hot(target_labels.long(), num_classes).permute(0,3,1,2).float()
     else:
-        pred = torch.sigmoid(pred)  # For binary, sigmoid
+        # Binary case retains thresholding behaviour
+        pred = torch.sigmoid(pred)
+        pred = (pred > threshold).float()
+        if target.dim() == 3:
+            target = target.unsqueeze(1).float()
 
-    # Convert predictions to binary masks
-    pred = (pred > threshold).float()  # Threshold to get binary predictions
+    # Apply mask if provided
+    if mask is not None:
+        mask_tensor = torch.from_numpy(mask).to(pred.device).view(1, 1, 512, 512)
+        mask_tensor = mask_tensor.expand(-1, pred.size(1), -1, -1)
+        pred = pred * mask_tensor
+        target = target * mask_tensor
 
-    # If target is not one-hot encoded (e.g., [B, H, W] with integer labels), convert it
-    if target.dim() == 3:  # [B, H, W]
-        target_one_hot = torch.zeros_like(pred)  # [B, C, H, W]
-        for c in range(num_classes):
-            target_one_hot[:, c, :, :] = (target == c).float()
-        target = target_one_hot
-    elif target.dim() == 4 and target.shape[1] != num_classes:
-        raise ValueError("Target shape must match [B, C, H, W] or [B, H, W] with integer labels")
-
-    # Calculate intersection and sum of predictions and targets
-    intersection = (pred * target).sum(dim=[2, 3])  # Sum over H and W dimensions
+    intersection = (pred * target).sum(dim=[2, 3])
     pred_sum = pred.sum(dim=[2, 3])
     target_sum = target.sum(dim=[2, 3])
-
-    # Dice per case (per sample in batch) for each class
-    dice_per_case = (2 * intersection + eps) / (pred_sum + target_sum + eps)  # [B, C]
-
-    # Mean Dice per case across classes
-    mean_dice_per_case = dice_per_case.mean(dim=1)  # [B]
-
+    dice_per_case = (2 * intersection + eps) / (pred_sum + target_sum + eps)
+    mean_dice_per_case = dice_per_case.mean(dim=1)
     return mean_dice_per_case
 
 """#### U-Net Model"""
@@ -386,7 +402,7 @@ if CONFIG['use_lr_scheduler']:
 # Early stopping variables
 best_dice = -1.0
 epochs_without_improvement = 0
-best_model_state = None
+best_model_state = copy.deepcopy(model.state_dict())
 
 log_and_print(f"\nStarting training for {CONFIG['num_epochs']} epochs...")
 log_and_print(f"Device: {device}")
@@ -412,7 +428,7 @@ for epoch in range(CONFIG['num_epochs']):
         for images, masks in test_loader:
             images, masks = images.to(device), masks.to(device)
             output = model(images)  # [B, C, H, W] logits
-            dice_scores = calculate_dice(output, masks, num_classes=CONFIG['num_classes'])  # Compute Dice
+            dice_scores = calculate_dice(output, masks, num_classes=CONFIG['num_classes'], mask=mask)  # Compute Dice
             dice_per_case_scores.extend(dice_scores.cpu().numpy())  # Store per-case Dice
 
     # Compute statistics
@@ -431,7 +447,7 @@ for epoch in range(CONFIG['num_epochs']):
     # Early stopping logic
     if avg_dice_per_case > best_dice:
         best_dice = avg_dice_per_case
-        best_model_state = model.state_dict().copy()
+        best_model_state = copy.deepcopy(model.state_dict())
         epochs_without_improvement = 0
         training_history['best_epoch'] = epoch + 1
         training_history['best_dice'] = best_dice
@@ -452,7 +468,7 @@ for epoch in range(CONFIG['num_epochs']):
             scheduler.step()  # Step with epoch for other schedulers
     
     # Check early stopping condition
-    if epochs_without_improvement >= CONFIG['patience']:
+    if epoch + 1 >= CONFIG['min_epochs'] and epochs_without_improvement >= CONFIG['patience']:
         log_and_print(f"\nEarly stopping triggered! No improvement in Dice for {CONFIG['patience']} epochs.")
         log_and_print(f"Loading best model with Dice: {best_dice:.4f}")
         model.load_state_dict(best_model_state)
@@ -468,9 +484,9 @@ save_training_plots()
 
 trained_Unet = model
 
-# Save model weights with timestamp to both locations
-timestamped_model_name = f'seg_unet_{timestamp}.pth'
-original_model_path = f'.../model-weights/seg-unet/{timestamped_model_name}'
+# Save model weights with constant name
+model_name = 'seg_unet.pth'
+original_model_path = f'/ari/users/nsefercioglu/model-weights/{model_name}'
 
 torch.save(trained_Unet.state_dict(), original_model_path)
 
@@ -484,9 +500,32 @@ with torch.no_grad():
     for images, masks in test_loader:
         images, masks = images.to(device), masks.to(device)
         output = model(images)
-        dice_scores = calculate_dice(output, masks, num_classes=CONFIG['num_classes'])
+        dice_scores = calculate_dice(output, masks, num_classes=CONFIG['num_classes'], mask=mask)
         final_dice_scores.extend(dice_scores.cpu().numpy())
 final_avg_dice = np.mean(final_dice_scores)
+# ------------------------------------------------------------------------------
+# Quick verification: reload saved segmentation weights and recompute Dice metric
+# ------------------------------------------------------------------------------
+log_and_print("\nVerifying saved segmentation model by reloading from disk ...")
+reloaded_model = U_Net(in_channels=1, out_channels=CONFIG['num_classes']).to(device)
+reloaded_model.load_state_dict(torch.load(original_model_path, map_location=device))
+reloaded_model.eval()
+
+verify_dice_scores = []
+with torch.no_grad():
+    for images, masks in test_loader:
+        images, masks = images.to(device), masks.to(device)
+        output = reloaded_model(images)
+        dice_scores = calculate_dice(output, masks, num_classes=CONFIG['num_classes'], mask=mask)
+        verify_dice_scores.extend(dice_scores.cpu().numpy())
+
+verify_avg_dice = np.mean(verify_dice_scores)
+log_and_print(f"Reloaded model -> Dice Per Case: {verify_avg_dice:.4f}")
+if np.isclose(verify_avg_dice, final_avg_dice):
+    log_and_print("Verification successful: saved model matches in-memory best model.")
+else:
+    log_and_print("WARNING: Reloaded model metrics differ! Check saving logic.")
+
 final_std_dice = np.std(final_dice_scores)
 
 # Convert training history to JSON-serializable format
@@ -533,7 +572,6 @@ log_and_print("="*80)
 # Close log file
 log_and_print(f"\nTraining completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 log_and_print(f"All outputs saved to: {run_dir}")
-log_file.close()
 
 """#### Final Results"""
 
@@ -555,7 +593,7 @@ def plot_segmentation_inference(model, dataset, sample_idx=0, num_classes=3, dev
         output = model(image)  # [1, C_out, H, W] logits
 
     # Compute Dice coefficient
-    dice_metrics = calculate_dice(output, ground_truth_tensor, num_classes=num_classes)
+    dice_metrics = calculate_dice(output, ground_truth_tensor, num_classes=num_classes, mask=mask)
 
     # Extract the Dice score for the single sample
     dice_per_case = dice_metrics[0].item()  # mean_dice_per_case is [B], so take the first element
@@ -615,7 +653,7 @@ def plot_segmentation_inference(model, dataset, sample_idx=0, num_classes=3, dev
         plt.show()
 
 # Create save path for the segmentation visualization
-segmentation_save_path = os.path.join(run_dir, "segmentation_visualization_sample_5.png")
+segmentation_save_path = os.path.join(run_dir, "segmentation_visualization.png")
 
 # Call the function with your trained U-Net and test dataset
 plot_segmentation_inference(
@@ -626,3 +664,5 @@ plot_segmentation_inference(
     device=device,
     save_path=segmentation_save_path
 )
+
+log_file.close()

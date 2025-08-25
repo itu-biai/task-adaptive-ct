@@ -35,18 +35,18 @@ CONFIG = {
     'n_processes': cpu_count(),  # Use all available CPU cores
     
     # Dataset directories
-    'low_dose_dir': '/.../dataset/low_dose',
-    'full_dose_dir': '/.../dataset/full_dose',
-    'seg_dir': '/.../dataset/segmentation_slices',
+    'low_dose_dir': '/YEREL/dataset/low_dose',
+    'full_dose_dir': '/YEREL/dataset/full_dose',
+    'seg_dir': '/YEREL/dataset/segmentation_slices',
     
     # Model weights paths
-    'seg_model_path': '.../model-weights/seg-unet/seg_unet.pth',
-    'base_unet_model_path': '.../model-weights/base-unet/base_unet_reconstruction.pth',
-    'joint_recon_model_path': '.../model-weights/joint-training/recon_unet/joint_recon_unet.pth',
-    'task_adaptive_model_path': '.../model-weights/task-adaptive/task_adaptive_unet.pth',
+    'seg_model_path': '/ari/users/nsefercioglu/model-weights/seg_unet.pth',
+    'base_unet_model_path': '/ari/users/nsefercioglu/model-weights/base_unet_reconstruction.pth',
+    'joint_recon_model_path': '/ari/users/nsefercioglu/model-weights/joint_recon_unet.pth',
+    'task_adaptive_model_path': '/ari/users/nsefercioglu/model-weights/task_adaptive_unet.pth',
     
     # Output directory for plots and logs
-    'output_dir': '.../inference-results/segmentation'
+    'output_dir': '/ari/users/nsefercioglu/inference-results'
 }
 
 """#### Output Directory and Logging Setup"""
@@ -163,36 +163,33 @@ log_and_print(f"Test dataset contains {len(test_dataset)} samples")
 """#### Dice Metric"""
 
 def calculate_dice(pred, target, num_classes=3, threshold=0.5, eps=1e-6):
-    """Calculate Dice coefficient for segmentation evaluation"""
-    # If pred is logits, apply softmax or sigmoid
+    """Calculate Dice coefficient using argmax (multi-class) or threshold (binary). Returns [B]."""
     if num_classes > 1:
-        pred = torch.softmax(pred, dim=1)  # For multi-class, softmax over channel dimension
+        # Convert predictions to class labels via argmax
+        pred_labels = torch.argmax(pred, dim=1)  # [B, H, W]
+
+        # Handle target formatting
+        if target.dim() == 4 and target.shape[1] == num_classes:
+            target_labels = torch.argmax(target, dim=1)
+        else:
+            target_labels = target
+
+        # One-hot encode back to [B, C, H, W]
+        pred = torch.nn.functional.one_hot(pred_labels, num_classes).permute(0, 3, 1, 2).float()
+        target = torch.nn.functional.one_hot(target_labels.long(), num_classes).permute(0, 3, 1, 2).float()
     else:
-        pred = torch.sigmoid(pred)  # For binary, sigmoid
+        # Binary case falls back to threshold approach
+        pred = torch.sigmoid(pred)
+        pred = (pred > threshold).float()
+        if target.dim() == 3:
+            target = target.unsqueeze(1).float()
 
-    # Convert predictions to binary masks
-    pred = (pred > threshold).float()  # Threshold to get binary predictions
-
-    # If target is not one-hot encoded (e.g., [B, H, W] with integer labels), convert it
-    if target.dim() == 3:  # [B, H, W]
-        target_one_hot = torch.zeros_like(pred)  # [B, C, H, W]
-        for c in range(num_classes):
-            target_one_hot[:, c, :, :] = (target == c).float()
-        target = target_one_hot
-    elif target.dim() == 4 and target.shape[1] != num_classes:
-        raise ValueError("Target shape must match [B, C, H, W] or [B, H, W] with integer labels")
-
-    # Calculate intersection and sum of predictions and targets
-    intersection = (pred * target).sum(dim=[2, 3])  # Sum over H and W dimensions
+    # Dice computation
+    intersection = (pred * target).sum(dim=[2, 3])
     pred_sum = pred.sum(dim=[2, 3])
     target_sum = target.sum(dim=[2, 3])
-
-    # Dice per case (per sample in batch) for each class
-    dice_per_case = (2 * intersection + eps) / (pred_sum + target_sum + eps)  # [B, C]
-
-    # Mean Dice per case across classes
-    mean_dice_per_case = dice_per_case.mean(dim=1)  # [B]
-
+    dice_per_case = (2 * intersection + eps) / (pred_sum + target_sum + eps)
+    mean_dice_per_case = dice_per_case.mean(dim=1)
     return mean_dice_per_case
 
 """#### U-Net Model"""
