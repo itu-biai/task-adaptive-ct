@@ -256,10 +256,10 @@ class TaskAdaptiveUnifiedDataset(Dataset):
             low_dose_img = self.transform_recon(low_dose_img)   # Shape: (1, H, W)
             full_dose_img = self.transform_recon(full_dose_img) # Shape: (1, H, W)
 
-        seg_map = seg_map.astype(np.int64)  # For CrossEntropyLoss
-
+        seg_map = torch.from_numpy(seg_map.astype(np.int64))  # [H, W] int64 tensor for CE Loss
+        # If additional mask transforms needed, apply via transform_seg (currently None)
         if self.transform_seg:
-            seg_map = self.transform_seg(seg_map)  # Shape: (1, H, W)
+            seg_map = self.transform_seg(seg_map)  # Optional additional transform maintains dtype/int labels
 
         return low_dose_img, full_dose_img, seg_map
 
@@ -422,7 +422,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Define transform for images
 transform_recon = transforms.ToTensor()  # Images are already normalized to [0, 1] during dataset creation
-transform_seg = transforms.ToTensor()    # For segmentation masks
+transform_seg = None  # Avoid ToTensor for masks; we will convert manually
 
 # Instantiate the unified dataset
 dataset = TaskAdaptiveUnifiedDataset(
@@ -543,7 +543,7 @@ for epoch in range(CONFIG['num_epochs']):
     for low_dose, full_dose, seg_map in train_loader:
         low_dose = low_dose.to(device)
         full_dose = full_dose.to(device)
-        seg_map = seg_map.to(device).squeeze(1) # Squeeze the channel dimension, shape -> [B, H, W]
+        seg_map = seg_map.to(device)  # Already [B, H, W]; no extra squeeze needed
 
         optimizer.zero_grad()
 
@@ -577,7 +577,7 @@ for epoch in range(CONFIG['num_epochs']):
         for low_dose, full_dose, seg_map in test_loader:
             low_dose = low_dose.to(device)
             full_dose = full_dose.to(device)
-            seg_map = seg_map.to(device).squeeze(1)  # [B, H, W] for segmentation
+            seg_map = seg_map.to(device)  # [B, H, W] for segmentation
             reconstructed = recon_model(low_dose)
             # Reconstruction metrics
             psnr_scores.extend(masked_psnr_metric(reconstructed, full_dose, mask))
@@ -679,7 +679,7 @@ final_dice_scores = []
 with torch.no_grad():
     for low_dose, full_dose, seg_map in test_loader:
         low_dose, full_dose = low_dose.to(device), full_dose.to(device)
-        seg_map = seg_map.to(device).squeeze(1)  # [B, H, W] for segmentation
+        seg_map = seg_map.to(device)  # [B, H, W] for segmentation
         reconstructed = task_adaptive_model(low_dose)
         # Reconstruction metrics
         final_psnr_scores.extend(masked_psnr_metric(reconstructed, full_dose, mask))
@@ -705,7 +705,7 @@ verify_psnr, verify_ssim, verify_dice = [], [], []
 with torch.no_grad():
     for low_dose, full_dose, seg_map in test_loader:
         low_dose, full_dose = low_dose.to(device), full_dose.to(device)
-        seg_map = seg_map.to(device).squeeze(1)
+        seg_map = seg_map.to(device)
         reconstructed = reloaded_model(low_dose)
         verify_psnr.extend(masked_psnr_metric(reconstructed, full_dose, mask))
         verify_ssim.extend(masked_ssim_metric(reconstructed, full_dose, mask))

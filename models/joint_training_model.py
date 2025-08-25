@@ -261,12 +261,12 @@ class JointTrainingUnifiedDataset(Dataset):
             low_dose_img = self.transform_recon(low_dose_img)   # Shape: (1, H, W)
             full_dose_img = self.transform_recon(full_dose_img) # Shape: (1, H, W)
 
-        seg_map = seg_map.astype(np.int64)  # For CrossEntropyLoss
-
+        seg_map = seg_map.astype(np.int64)  # [H, W] Numpy int64
+        seg_map_tensor = torch.from_numpy(seg_map)  # Convert to tensor with integer classes
         if self.transform_seg:
-            seg_map = self.transform_seg(seg_map)  # Shape: (1, H, W)
+            seg_map_tensor = self.transform_seg(seg_map_tensor)  # Apply any additional transform
 
-        return low_dose_img, full_dose_img, seg_map
+        return low_dose_img, full_dose_img, seg_map_tensor
 
 """#### Circular Mask"""
 
@@ -429,7 +429,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Define transform for images
 transform_recon = transforms.ToTensor()  # Images are already normalized to [0, 1] during dataset creation
-transform_seg = transforms.ToTensor()    # For segmentation masks
+transform_seg = None  # Avoid ToTensor for masks; convert manually
 
 # Instantiate the unified dataset
 dataset = JointTrainingUnifiedDataset(
