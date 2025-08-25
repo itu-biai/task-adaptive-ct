@@ -14,25 +14,19 @@ The project consists of four main components:
 
 ```
 .
-├── benchmarks/
-│   ├── benchmarks.py              # Performance evaluation scripts
-│   ├── parallel_benchmarks.py     # Parallel version for faster processing
-│   └── benchmark_results.txt      # Benchmark results
 ├── dataset/
-│   ├── create_numpy_dataset.py    # Dataset creation and preprocessing
-│   ├── parallel-numpy-dataset.py  # Parallel dataset creation
-│   └── visualize_samples.py       # Dataset visualization tools
+│   └── parallel-numpy-dataset.py  # Parallel dataset creation from NIFTI files
 ├── inference/
-│   ├── bounding-box.py            # Interactive ROI analysis
-│   ├── segmentation_inference.py  # Comprehensive segmentation evaluation
-│   └── segmentation_task_adaptive.py  # Task-adaptive segmentation inference
+│   ├── comprehensive_visualization.py  # Complete visualization of all methods
+│   └── segmentation_inference.py       # Comprehensive segmentation evaluation
 ├── models/
-│   ├── train_base_unet.py         # Base U-Net reconstruction model
-│   ├── train_seg_unet.py          # Segmentation U-Net model
-│   ├── train_task_adapted.py      # Task-adaptive reconstruction model
+│   ├── train_base_unet.py         # Base U-Net reconstruction model training
+│   ├── train_seg_unet.py          # Segmentation U-Net model training  
+│   ├── train_task_adapted.py      # Task-adaptive reconstruction model training
 │   └── joint_training_model.py    # Joint reconstruction and segmentation training
 ├── LICENSE                        # GPL v3.0 license
 ├── requirements.txt               # Python dependencies
+├── README.md                      # This documentation
 └── .gitignore                     # Git ignore file
 ```
 
@@ -44,11 +38,13 @@ The project consists of four main components:
 - **Task-Adaptive Learning**: Reconstruction model optimized using both image quality and segmentation accuracy metrics
 - **Evaluation Metrics**: PSNR and SSIM for reconstruction quality; Dice coefficient for segmentation accuracy
 - **Modular Design**: Separate training scripts for different approaches
-- **Comprehensive Evaluation**: Multiple reconstruction methods compared
-- **Parallel Processing**: Support for faster dataset creation and benchmarking
-- **Interactive Analysis**: Tools for ROI-based evaluation
-- **Automatic Logging**: Result visualization and tracking
-- **Reproducible Training**: Configurable random seeds
+- **Comprehensive Evaluation**: Multiple reconstruction methods compared including FBP, BM3D, and U-Net variants
+- **Parallel Processing**: Multi-core support for faster dataset creation and evaluation
+- **Comprehensive Visualization**: Complete comparison grids and segmentation overlays
+- **Automatic Logging**: Detailed result tracking with JSON and plot outputs
+- **Reproducible Training**: Configurable random seeds and systematic evaluation
+- **GPU Acceleration**: CUDA support for training and inference
+- **Command Line Interface**: Flexible training with alpha parameter configuration
 
 ## Installation
 
@@ -67,15 +63,26 @@ The project consists of four main components:
 
 ## Requirements
 
-The project dependencies are listed in `requirements.txt`:
-- PyTorch and torchvision for deep learning
-- NumPy for numerical computations
-- scikit-image for image processing
-- nibabel for NIFTI file handling
-- matplotlib for visualization
-- bm3d for BM3D denoising algorithm
-- scipy for scientific computing
-- tqdm for progress bars
+The project dependencies are listed in `requirements.txt` and include:
+
+### Core ML and Scientific Computing
+- **PyTorch (>=1.9.0)** and **torchvision (>=0.10.0)** for deep learning
+- **NumPy (>=1.21.0)** for numerical computations  
+- **SciPy (>=1.7.0)** for scientific computing
+
+### Image Processing and Computer Vision
+- **scikit-image (>=0.18.0)** for image processing (radon transforms, PSNR/SSIM)
+- **matplotlib (>=3.4.0)** for visualization and plotting
+- **bm3d (>=4.0.0)** for BM3D denoising algorithm
+
+### Medical Imaging
+- **nibabel (>=3.2.0)** for NIFTI file handling
+
+### Data Processing and Analysis
+- **pandas (>=1.3.0)** for data analysis and CSV output
+- **tqdm (>=4.61.0)** for progress bars
+
+The project also uses standard Python libraries: `os`, `datetime`, `json`, `argparse`, `copy`, `random`, `functools`, `multiprocessing`.
 
 ## Configuration
 
@@ -91,54 +98,63 @@ Before running any scripts, you need to configure the environment. All scripts u
 ### 1. Dataset Preparation
 
 ```bash
-# Create the dataset from raw NIFTI files
-python dataset/create_numpy_dataset.py
-
-# For faster processing with parallel execution
+# Create the dataset from raw NIFTI files with parallel processing
 python dataset/parallel-numpy-dataset.py
-
-# Visualize samples from the dataset
-python dataset/visualize_samples.py
 ```
+
+**Configuration**: Edit the `CONFIG` dictionary at the top of the script to set:
+- `volume_folder`: Path to input NIFTI volume files  
+- `segmentation_folder`: Path to input NIFTI segmentation files
+- `output_dir`: Output directory for preprocessed .npy files
+- `target_size`: Target image size (default: 512x512)
+- `dose_fraction`: Low-dose simulation parameter (default: 0.75)
 
 ### 2. Model Training
 
+#### Base U-Net Reconstruction Model
 ```bash
-# Train the base reconstruction U-Net
 python models/train_base_unet.py
+```
 
-# Train the segmentation U-Net
+#### Segmentation U-Net Model  
+```bash
 python models/train_seg_unet.py
-
-# Train the task-adaptive reconstruction model
-python models/train_task_adapted.py
-
-# Train both models jointly
-python models/joint_training_model.py
 ```
 
-### 3. Benchmarks
-
+#### Task-Adaptive Reconstruction Model
 ```bash
-# Run performance benchmarks
-python benchmarks/benchmarks.py
-
-# For faster parallel processing
-python benchmarks/parallel_benchmarks.py
+# Train with different alpha values for loss weighting
+python models/train_task_adapted.py --alpha 0.1
+python models/train_task_adapted.py --alpha 0.5  
+python models/train_task_adapted.py --alpha 0.9
 ```
 
-### 4. Inference
-
+#### Joint Training Model
 ```bash
-# Interactive bounding box analysis
-python inference/bounding-box.py
+# Train reconstruction and segmentation models jointly
+python models/joint_training_model.py --alpha 0.1
+python models/joint_training_model.py --alpha 0.5
+python models/joint_training_model.py --alpha 0.9
+```
 
-# Comprehensive segmentation evaluation
+**Alpha Parameter**: Controls the balance between reconstruction loss (MSE) and segmentation loss (Dice):
+- α = 0.1: 90% reconstruction, 10% segmentation  
+- α = 0.5: 50% reconstruction, 50% segmentation
+- α = 0.9: 10% reconstruction, 90% segmentation
+
+### 3. Evaluation and Inference
+
+#### Comprehensive Segmentation Evaluation
+```bash
 python inference/segmentation_inference.py
-
-# Task-adaptive segmentation inference
-python inference/segmentation_task_adaptive.py
 ```
+Generates detailed metrics (PSNR, SSIM, Dice) for all reconstruction methods and saves results to CSV/JSON.
+
+#### Complete Visualization
+```bash  
+python inference/comprehensive_visualization.py
+```
+Creates side-by-side comparison grids and segmentation overlays for random test samples.
 
 ## Model Architecture
 
@@ -171,23 +187,61 @@ The models are evaluated using:
 - **Dice coefficient** for segmentation accuracy
 - **Masked metrics** using circular ROI for focused evaluation
 
-## Benchmark Results
+## Evaluation Methods
 
-The following baseline methods are compared:
-- **Low-dose images** (input)
-- **FBP reconstruction** (Filtered Back Projection)
-- **BM3D denoising**
-- **Base U-Net reconstruction**
-- **Joint training reconstruction**
-- **Task-adaptive reconstruction**
+The following reconstruction methods are comprehensively compared:
 
-Results are automatically saved to `benchmarks/benchmark_results.txt`.
+### Baseline Methods
+- **Low-dose images** (input) - Direct low-dose CT scans
+- **FBP reconstruction** (Filtered Back Projection) - Classical reconstruction
+- **BM3D denoising** - Block-matching 3D denoising on low-dose images
+
+### Deep Learning Methods
+- **Base U-Net reconstruction** - Standard U-Net trained for reconstruction only
+- **Joint training reconstruction** (α = 0.1, 0.5, 0.9) - Simultaneous reconstruction and segmentation
+- **Task-adaptive reconstruction** (α = 0.1, 0.5, 0.9) - Reconstruction guided by pretrained segmentation
+
+### Evaluation Metrics
+- **PSNR/SSIM**: Image quality metrics (both full image and masked ROI)
+- **Dice Score**: Segmentation accuracy on reconstructed images
+- **Processing Time**: Computational efficiency comparison
+
+Results are automatically saved in multiple formats:
+- **CSV files**: Tabular results with statistics
+- **JSON files**: Detailed results with raw data
+- **Visualization plots**: Comparison grids and overlays
+
+## Output Structure
+
+Training and evaluation scripts generate organized outputs:
+
+```
+output_directories/
+├── logs/                           # Training logs and plots
+│   ├── base-unet/                 # Base U-Net training outputs
+│   ├── seg-unet/                  # Segmentation training outputs  
+│   ├── joint-training-alpha*/     # Joint training outputs (by alpha)
+│   └── task-adaptive-alpha*/      # Task-adaptive training outputs
+├── model-weights/                 # Saved model weights (.pth files)
+├── inference-results/             # Evaluation results and metrics
+└── visualizations/                # Generated comparison plots
+```
+
+Each training run creates:
+- **Detailed logs**: Training progress and metrics
+- **Training curves**: Loss and validation plots
+- **Model weights**: Best performing models  
+- **Configuration files**: Reproducible settings
+- **Results summaries**: Performance statistics
 
 ## Pre-trained Weights
 
-Pre-trained model weights are not included in this repository. You can train the models using the provided scripts. Training logs and model checkpoints will be saved with timestamps for version control.
+Pre-trained model weights are not included in this repository due to size constraints. Train the models using the provided scripts. All model weights are automatically saved to `/path/to/model-weights/` with descriptive names:
 
-
+- `base_unet_reconstruction.pth` - Base reconstruction model
+- `seg_unet.pth` - Segmentation model  
+- `joint_recon_unet_alpha*.pth` - Joint training models
+- `task_adaptive_unet_alpha*.pth` - Task-adaptive models
 
 ## License
 
