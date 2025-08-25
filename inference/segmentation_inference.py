@@ -6,8 +6,10 @@ import numpy as np
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import os
+import pandas as pd
 from torch.utils.data import Dataset, DataLoader, random_split
 from skimage.transform import radon, iradon
+from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 import bm3d
 from scipy.ndimage import zoom
 from datetime import datetime
@@ -42,8 +44,16 @@ CONFIG = {
     # Model weights paths
     'seg_model_path': '/ari/users/nsefercioglu/model-weights/seg_unet.pth',
     'base_unet_model_path': '/ari/users/nsefercioglu/model-weights/base_unet_reconstruction.pth',
-    'joint_recon_model_path': '/ari/users/nsefercioglu/model-weights/joint_recon_unet.pth',
-    'task_adaptive_model_path': '/ari/users/nsefercioglu/model-weights/task_adaptive_unet.pth',
+    'joint_models': {
+        'alpha01': '/ari/users/nsefercioglu/model-weights/joint_recon_unet_alpha01.pth',
+        'alpha05': '/ari/users/nsefercioglu/model-weights/joint_recon_unet_alpha05.pth',
+        'alpha09': '/ari/users/nsefercioglu/model-weights/joint_recon_unet_alpha09.pth'
+    },
+    'task_adaptive_models': {
+        'alpha01': '/ari/users/nsefercioglu/model-weights/task_adaptive_unet_alpha01.pth',
+        'alpha05': '/ari/users/nsefercioglu/model-weights/task_adaptive_unet_alpha05.pth',
+        'alpha09': '/ari/users/nsefercioglu/model-weights/task_adaptive_unet_alpha09.pth'
+    },
     
     # Output directory for plots and logs
     'output_dir': '/ari/users/nsefercioglu/inference-results'
@@ -54,10 +64,10 @@ CONFIG = {
 # Create output directory if it doesn't exist
 os.makedirs(CONFIG['output_dir'], exist_ok=True)
 
-# Create unique run directory with timestamp
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-run_dir = os.path.join(CONFIG['output_dir'], f"segmentation_inference_run_{timestamp}")
+# Use output directory directly (overwrite previous outputs)
+run_dir = CONFIG['output_dir']
 os.makedirs(run_dir, exist_ok=True)
+timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # For logging purposes only
 
 print(f"Segmentation inference outputs will be saved to: {run_dir}")
 
@@ -160,9 +170,64 @@ test_loader = DataLoader(
 log_and_print(f"Dataset loaded with {len(dataset)} total samples")
 log_and_print(f"Test dataset contains {len(test_dataset)} samples")
 
-"""#### Dice Metric"""
+"""#### Comprehensive Metrics"""
 
-def calculate_dice(pred, target, num_classes=3, threshold=0.5, eps=1e-6):
+def create_circular_mask(h, w, center=None, radius=None):
+    """Create circular mask for masked metrics"""
+    if center is None:
+        center = (w // 2, h // 2)
+    if radius is None:
+        radius = min(w, h) / 2
+    Y, X = np.ogrid[:h, :w]
+    dist_from_center = np.sqrt((X - center[0])**2 + (Y - center[1])**2)
+    mask = dist_from_center <= radius
+    return mask.astype(np.float32)
+
+def calculate_psnr(pred, target, data_range=None):
+    """Calculate PSNR for a batch of images. Returns list of PSNR values."""
+    pred_np = pred.detach().cpu().numpy()
+    target_np = target.detach().cpu().numpy()
+    psnr_values = []
+    for i in range(pred_np.shape[0]):
+        # Single-channel images, index with [0] to get [H, W]
+        pred_img = pred_np[i, 0]
+        target_img = target_np[i, 0]
+        if data_range is None:
+            data_range = target_img.max() - target_img.min()
+        psnr = peak_signal_noise_ratio(target_img, pred_img, data_range=data_range)
+        psnr_values.append(psnr)
+    return psnr_values
+
+def calculate_ssim(pred, target, data_range=None):
+    """Calculate SSIM for a batch of images. Returns list of SSIM values."""
+    pred_np = pred.detach().cpu().numpy()
+    target_np = target.detach().cpu().numpy()
+    ssim_values = []
+    for i in range(pred_np.shape[0]):
+        # Single-channel images, index with [0] to get [H, W]
+        pred_img = pred_np[i, 0]
+        target_img = target_np[i, 0]
+        if data_range is None:
+            data_range = target_img.max() - target_img.min()
+        ssim = structural_similarity(target_img, pred_img, data_range=data_range)
+        ssim_values.append(ssim)
+    return ssim_values
+
+def calculate_masked_psnr(pred, target, mask, data_range=None):
+    """Calculate PSNR within masked region. Returns list of PSNR values."""
+    mask_tensor = torch.from_numpy(mask).to(pred.device).view(1, 1, 512, 512)
+    masked_pred = pred * mask_tensor
+    masked_target = target * mask_tensor
+    return calculate_psnr(masked_pred, masked_target, data_range)
+
+def calculate_masked_ssim(pred, target, mask, data_range=None):
+    """Calculate SSIM within masked region. Returns list of SSIM values."""
+    mask_tensor = torch.from_numpy(mask).to(pred.device).view(1, 1, 512, 512)
+    masked_pred = pred * mask_tensor
+    masked_target = target * mask_tensor
+    return calculate_ssim(masked_pred, masked_target, data_range)
+
+def calculate_dice(pred, target, num_classes=3, threshold=0.5, eps=1e-6, mask=None):
     """Calculate Dice coefficient using argmax (multi-class) or threshold (binary). Returns [B]."""
     if num_classes > 1:
         # Convert predictions to class labels via argmax
@@ -184,6 +249,13 @@ def calculate_dice(pred, target, num_classes=3, threshold=0.5, eps=1e-6):
         if target.dim() == 3:
             target = target.unsqueeze(1).float()
 
+    # Apply mask if provided
+    if mask is not None:
+        mask_tensor = torch.from_numpy(mask).to(pred.device).view(1, 1, 512, 512)
+        mask_tensor = mask_tensor.expand(-1, pred.size(1), -1, -1)
+        pred = pred * mask_tensor
+        target = target * mask_tensor
+
     # Dice computation
     intersection = (pred * target).sum(dim=[2, 3])
     pred_sum = pred.sum(dim=[2, 3])
@@ -191,6 +263,10 @@ def calculate_dice(pred, target, num_classes=3, threshold=0.5, eps=1e-6):
     dice_per_case = (2 * intersection + eps) / (pred_sum + target_sum + eps)
     mean_dice_per_case = dice_per_case.mean(dim=1)
     return mean_dice_per_case
+
+def calculate_masked_dice(pred, target, mask, num_classes=3, threshold=0.5, eps=1e-6):
+    """Calculate Dice coefficient within masked region. Returns [B]."""
+    return calculate_dice(pred, target, num_classes, threshold, eps, mask)
 
 """#### U-Net Model"""
 
@@ -287,17 +363,27 @@ base_recon_model.load_state_dict(torch.load(CONFIG['base_unet_model_path'], map_
 base_recon_model.eval()
 log_and_print(f"Base U-Net reconstruction model loaded from: {CONFIG['base_unet_model_path']}")
 
-# Load Joint training reconstruction model
-joint_recon_model = U_Net(in_channels=1, out_channels=1).to(device)
-joint_recon_model.load_state_dict(torch.load(CONFIG['joint_recon_model_path'], map_location=device))
-joint_recon_model.eval()
-log_and_print(f"Joint training reconstruction model loaded from: {CONFIG['joint_recon_model_path']}")
+# Load Joint training reconstruction models (all alphas)
+joint_recon_models = {}
+for alpha, path in CONFIG['joint_models'].items():
+    model = U_Net(in_channels=1, out_channels=1).to(device)
+    model.load_state_dict(torch.load(path, map_location=device))
+    model.eval()
+    joint_recon_models[alpha] = model
+    log_and_print(f"Joint training reconstruction model ({alpha}) loaded from: {path}")
 
-# Load Task-adaptive reconstruction model
-task_adaptive_model = U_Net(in_channels=1, out_channels=1).to(device)
-task_adaptive_model.load_state_dict(torch.load(CONFIG['task_adaptive_model_path'], map_location=device))
-task_adaptive_model.eval()
-log_and_print(f"Task-adaptive reconstruction model loaded from: {CONFIG['task_adaptive_model_path']}")
+# Load Task-adaptive reconstruction models (all alphas)
+task_adaptive_models = {}
+for alpha, path in CONFIG['task_adaptive_models'].items():
+    model = U_Net(in_channels=1, out_channels=1).to(device)
+    model.load_state_dict(torch.load(path, map_location=device))
+    model.eval()
+    task_adaptive_models[alpha] = model
+    log_and_print(f"Task-adaptive reconstruction model ({alpha}) loaded from: {path}")
+
+# Create circular mask for masked metrics
+mask = create_circular_mask(h=512, w=512, center=(256, 256), radius=256)
+log_and_print(f"Circular mask created for masked metrics (radius: 256 pixels)")
 
 """#### Segmentation Inference Functions"""
 
@@ -429,70 +515,86 @@ def apply_bm3d_denoising(low_dose_batch, sigma_psd=CONFIG['sigma_psd']):
     bm3d_tensor = torch.from_numpy(bm3d_denoised.astype(np.float32)).unsqueeze(1).to(device)
     return bm3d_tensor
 
-def evaluate_segmentation_on_reconstructed_images():
-    """Evaluate segmentation performance on all reconstruction methods"""
+def evaluate_comprehensive_metrics():
+    """Evaluate comprehensive metrics (PSNR, SSIM, Dice) for all reconstruction methods"""
     
-    log_and_print(f"\nStarting segmentation inference on all reconstruction methods...")
+    log_and_print(f"\nStarting comprehensive evaluation...")
     log_and_print(f"Processing {len(test_loader)} batches with batch size {CONFIG['batch_size']} ({len(test_loader.dataset)} total samples)")
     log_and_print(f"Using {CONFIG['n_processes']} CPU processes for FBP and BM3D parallelization")
+    log_and_print(f"Metrics: PSNR, SSIM, Dice (both normal and masked)")
     
-    # Initialize result storage
-    results = {
-        'low_dose': [],
-        'fbp': [],
-        'bm3d': [],
-        'base_unet': [],
-        'joint_training': [],
-        'task_adaptive': []
-    }
+    # Initialize result storage with nested structure
+    results = {}
+    
+    # Initialize all method combinations
+    methods = ['low_dose', 'fbp', 'bm3d', 'base_unet']
+    for alpha in CONFIG['joint_models'].keys():
+        methods.append(f'joint_{alpha}')
+    for alpha in CONFIG['task_adaptive_models'].keys():
+        methods.append(f'task_adaptive_{alpha}')
+    
+    for method in methods:
+        results[method] = {
+            'psnr': [], 'ssim': [], 'dice': [],
+            'masked_psnr': [], 'masked_ssim': [], 'masked_dice': []
+        }
     
     # Process test dataset
     with torch.no_grad():
-        progress_bar = tqdm(test_loader, desc="Segmentation Inference", unit="batch")
+        progress_bar = tqdm(test_loader, desc="Comprehensive Evaluation", unit="batch")
         for batch_idx, (low_dose, full_dose, seg_map) in enumerate(progress_bar):
             low_dose = low_dose.to(device)
             full_dose = full_dose.to(device)
             seg_map = seg_map.to(device)
             
-            # 1. Low-dose images segmentation
-            seg_pred_low_dose = seg_model(low_dose)
-            dice_low_dose = calculate_dice(seg_pred_low_dose, seg_map, num_classes=CONFIG['num_classes'])
-            results['low_dose'].extend(dice_low_dose.cpu().numpy())
+            # Generate all reconstructions once per batch for efficiency
+            reconstructions = {}
             
-            # 2. FBP reconstructed images segmentation (parallel)
-            fbp_reconstructed = apply_fbp_reconstruction_parallel(low_dose)
-            seg_pred_fbp = seg_model(fbp_reconstructed)
-            dice_fbp = calculate_dice(seg_pred_fbp, seg_map, num_classes=CONFIG['num_classes'])
-            results['fbp'].extend(dice_fbp.cpu().numpy())
+            # 1. Low-dose (no reconstruction)
+            reconstructions['low_dose'] = low_dose
             
-            # 3. BM3D denoised images segmentation (parallel)
-            bm3d_denoised = apply_bm3d_denoising_parallel(low_dose)
-            seg_pred_bm3d = seg_model(bm3d_denoised)
-            dice_bm3d = calculate_dice(seg_pred_bm3d, seg_map, num_classes=CONFIG['num_classes'])
-            results['bm3d'].extend(dice_bm3d.cpu().numpy())
+            # 2. FBP reconstruction
+            reconstructions['fbp'] = apply_fbp_reconstruction_parallel(low_dose)
             
-            # 4. Base U-Net reconstructed images segmentation
-            base_unet_reconstructed = base_recon_model(low_dose)
-            seg_pred_base_unet = seg_model(base_unet_reconstructed)
-            dice_base_unet = calculate_dice(seg_pred_base_unet, seg_map, num_classes=CONFIG['num_classes'])
-            results['base_unet'].extend(dice_base_unet.cpu().numpy())
+            # 3. BM3D denoising
+            reconstructions['bm3d'] = apply_bm3d_denoising_parallel(low_dose)
             
-            # 5. Joint training reconstructed images segmentation
-            joint_reconstructed = joint_recon_model(low_dose)
-            seg_pred_joint = seg_model(joint_reconstructed)
-            dice_joint = calculate_dice(seg_pred_joint, seg_map, num_classes=CONFIG['num_classes'])
-            results['joint_training'].extend(dice_joint.cpu().numpy())
+            # 4. Base U-Net reconstruction
+            reconstructions['base_unet'] = base_recon_model(low_dose)
             
-            # 6. Task-adaptive reconstructed images segmentation
-            task_adaptive_reconstructed = task_adaptive_model(low_dose)
-            seg_pred_task_adaptive = seg_model(task_adaptive_reconstructed)
-            dice_task_adaptive = calculate_dice(seg_pred_task_adaptive, seg_map, num_classes=CONFIG['num_classes'])
-            results['task_adaptive'].extend(dice_task_adaptive.cpu().numpy())
+            # 5. Joint training reconstructions (all alphas)
+            for alpha, model in joint_recon_models.items():
+                reconstructions[f'joint_{alpha}'] = model(low_dose)
             
-            # Update progress bar with current batch info
+            # 6. Task-adaptive reconstructions (all alphas)
+            for alpha, model in task_adaptive_models.items():
+                reconstructions[f'task_adaptive_{alpha}'] = model(low_dose)
+            
+            # Calculate metrics for each reconstruction method
+            for method, recon_images in reconstructions.items():
+                # PSNR and SSIM calculations (reconstruction metrics)
+                psnr_scores = calculate_psnr(recon_images, full_dose)
+                ssim_scores = calculate_ssim(recon_images, full_dose)
+                masked_psnr_scores = calculate_masked_psnr(recon_images, full_dose, mask)
+                masked_ssim_scores = calculate_masked_ssim(recon_images, full_dose, mask)
+                
+                # Dice calculation (segmentation metric)
+                seg_pred = seg_model(recon_images)
+                dice_scores = calculate_dice(seg_pred, seg_map, num_classes=CONFIG['num_classes'])
+                masked_dice_scores = calculate_masked_dice(seg_pred, seg_map, mask, num_classes=CONFIG['num_classes'])
+                
+                # Store results
+                results[method]['psnr'].extend(psnr_scores)
+                results[method]['ssim'].extend(ssim_scores)
+                results[method]['dice'].extend(dice_scores.cpu().numpy())
+                results[method]['masked_psnr'].extend(masked_psnr_scores)
+                results[method]['masked_ssim'].extend(masked_ssim_scores)
+                results[method]['masked_dice'].extend(masked_dice_scores.cpu().numpy())
+            
+            # Update progress bar
             progress_bar.set_postfix({
                 'Batch': f"{batch_idx + 1}/{len(test_loader)}",
-                'Samples': f"{(batch_idx + 1) * CONFIG['batch_size']}/{len(test_loader.dataset)}"
+                'Methods': len(reconstructions)
             })
     
     return results
@@ -500,117 +602,212 @@ def evaluate_segmentation_on_reconstructed_images():
 """#### Results Analysis and Saving"""
 
 def analyze_and_save_results(results):
-    """Calculate statistics and save results"""
+    """Calculate statistics and save comprehensive results to CSV and JSON"""
     
     log_and_print("\n" + "="*80)
-    log_and_print("SEGMENTATION INFERENCE RESULTS")
+    log_and_print("COMPREHENSIVE EVALUATION RESULTS")
     log_and_print("="*80)
     
-    # Calculate statistics
+    # Calculate statistics for all metrics
     statistics = {}
-    for method, dice_scores in results.items():
-        dice_scores = np.array(dice_scores)
-        mean_dice = np.mean(dice_scores)
-        std_dice = np.std(dice_scores)
+    csv_data = []
+    
+    metrics = ['psnr', 'ssim', 'dice', 'masked_psnr', 'masked_ssim', 'masked_dice']
+    
+    for method, method_results in results.items():
+        statistics[method] = {}
+        method_display = method.replace('_', ' ').title()
         
-        statistics[method] = {
-            'mean': float(mean_dice),
-            'std': float(std_dice),
-            'count': len(dice_scores)
-        }
+        log_and_print(f"\n{method_display}:")
         
-        # Display results
-        method_name = method.replace('_', ' ').title()
-        log_and_print(f"{method_name}:")
-        log_and_print(f"  Dice Score: {mean_dice:.4f} ± {std_dice:.4f}")
-        log_and_print(f"  Sample Count: {len(dice_scores)}")
-        log_and_print("")
+        # Create row for CSV
+        csv_row = {'Method': method_display}
+        
+        for metric in metrics:
+            values = np.array(method_results[metric])
+            mean_val = np.mean(values)
+            std_val = np.std(values)
+            
+            statistics[method][metric] = {
+                'mean': float(mean_val),
+                'std': float(std_val),
+                'count': len(values)
+            }
+            
+            # Display results
+            metric_display = metric.replace('_', ' ').upper()
+            log_and_print(f"  {metric_display}: {mean_val:.4f} ± {std_val:.4f}")
+            
+            # Add to CSV row
+            csv_row[f'{metric_display}_mean'] = round(mean_val, 4)
+            csv_row[f'{metric_display}_std'] = round(std_val, 4)
+        
+        csv_data.append(csv_row)
+        log_and_print(f"  Sample Count: {len(values)}")
+    
+    # Save to CSV
+    csv_path = os.path.join(run_dir, 'comprehensive_evaluation_results.csv')
+    df = pd.DataFrame(csv_data)
+    df.to_csv(csv_path, index=False)
+    log_and_print(f"\nCSV results saved to: {csv_path}")
     
     # Save detailed results to JSON
     results_summary = {
         'statistics': statistics,
-        'raw_results': {method: [float(x) for x in scores] for method, scores in results.items()},
+        'raw_results': {
+            method: {
+                metric: [float(x) for x in values] 
+                for metric, values in method_results.items()
+            } 
+            for method, method_results in results.items()
+        },
         'config': config_to_save,
-        'timestamp': timestamp
+        'timestamp': timestamp,
+        'evaluation_info': {
+            'total_samples': len(list(results.values())[0]['psnr']),
+            'methods_evaluated': list(results.keys()),
+            'metrics_computed': metrics,
+            'mask_radius': 256
+        }
     }
     
-    results_path = os.path.join(run_dir, 'segmentation_inference_results.json')
-    with open(results_path, 'w') as f:
+    json_path = os.path.join(run_dir, 'comprehensive_evaluation_results.json')
+    with open(json_path, 'w') as f:
         json.dump(results_summary, f, indent=2)
-    
-    log_and_print(f"Detailed results saved to: {results_path}")
+    log_and_print(f"Detailed JSON results saved to: {json_path}")
     
     # Save summary results to text file
-    summary_path = os.path.join(run_dir, 'segmentation_results_summary.txt')
+    summary_path = os.path.join(run_dir, 'comprehensive_results_summary.txt')
     with open(summary_path, 'w') as f:
-        f.write("Segmentation Inference Results Summary\n")
+        f.write("Comprehensive Evaluation Results Summary\n")
         f.write("="*50 + "\n\n")
+        f.write(f"Total samples evaluated: {len(list(results.values())[0]['psnr'])}\n")
+        f.write(f"Methods evaluated: {len(results)}\n")
+        f.write(f"Metrics computed: {', '.join(metrics)}\n")
+        f.write(f"Mask radius: 256 pixels\n\n")
+        
         for method, stats in statistics.items():
             method_name = method.replace('_', ' ').title()
             f.write(f"{method_name}:\n")
-            f.write(f"  Dice Score: {stats['mean']:.4f} ± {stats['std']:.4f}\n")
-            f.write(f"  Sample Count: {stats['count']}\n\n")
+            for metric in metrics:
+                metric_display = metric.replace('_', ' ').upper()
+                f.write(f"  {metric_display}: {stats[metric]['mean']:.4f} ± {stats[metric]['std']:.4f}\n")
+            f.write(f"  Sample Count: {stats[metrics[0]]['count']}\n\n")
     
     log_and_print(f"Summary results saved to: {summary_path}")
     
     return statistics
 
 def create_results_visualization(statistics):
-    """Create a bar plot visualization of the results"""
+    """Create comprehensive visualizations of the results"""
     
     methods = list(statistics.keys())
     method_names = [method.replace('_', ' ').title() for method in methods]
-    means = [statistics[method]['mean'] for method in methods]
-    stds = [statistics[method]['std'] for method in methods]
     
-    plt.figure(figsize=(12, 8))
-    bars = plt.bar(method_names, means, yerr=stds, capsize=5, alpha=0.8, 
-                   color=['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#FF9FF3'])
+    # Create a 2x3 subplot for all metrics
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    fig.suptitle('Comprehensive Evaluation Results Across Reconstruction Methods', fontsize=16, fontweight='bold')
     
-    plt.title('Segmentation Performance (Dice Score) Across Reconstruction Methods', fontsize=16, fontweight='bold')
-    plt.ylabel('Dice Score', fontsize=14)
-    plt.xlabel('Reconstruction Method', fontsize=14)
-    plt.xticks(rotation=45, ha='right')
-    plt.grid(axis='y', alpha=0.3)
+    metrics = ['psnr', 'ssim', 'dice', 'masked_psnr', 'masked_ssim', 'masked_dice']
+    metric_titles = ['PSNR (dB)', 'SSIM', 'Dice Score', 'Masked PSNR (dB)', 'Masked SSIM', 'Masked Dice Score']
+    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#FF9FF3']
     
-    # Add value labels on bars
-    for bar, mean, std in zip(bars, means, stds):
-        height = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2., height + std + 0.01,
-                f'{mean:.3f}±{std:.3f}', ha='center', va='bottom', fontweight='bold')
+    for idx, (metric, title) in enumerate(zip(metrics, metric_titles)):
+        ax = axes[idx // 3, idx % 3]
+        
+        means = [statistics[method][metric]['mean'] for method in methods]
+        stds = [statistics[method][metric]['std'] for method in methods]
+        
+        bars = ax.bar(range(len(methods)), means, yerr=stds, capsize=3, alpha=0.8, 
+                     color=[colors[i % len(colors)] for i in range(len(methods))])
+        
+        ax.set_title(title, fontsize=12, fontweight='bold')
+        ax.set_ylabel('Score', fontsize=10)
+        ax.set_xticks(range(len(methods)))
+        ax.set_xticklabels(method_names, rotation=45, ha='right', fontsize=8)
+        ax.grid(axis='y', alpha=0.3)
+        
+        # Add value labels on bars
+        for i, (bar, mean, std) in enumerate(zip(bars, means, stds)):
+            if not np.isnan(mean):  # Only add label if value is valid
+                height = bar.get_height()
+                ax.text(bar.get_x() + bar.get_width()/2., height + std + 0.01,
+                       f'{mean:.3f}', ha='center', va='bottom', fontsize=7, fontweight='bold')
+        
+        # Set reasonable y-limits
+        if means and not all(np.isnan(means)):
+            y_max = max([m + s for m, s in zip(means, stds) if not np.isnan(m)])
+            ax.set_ylim(0, y_max * 1.1)
     
-    plt.ylim(0, max(means) + max(stds) + 0.1)
     plt.tight_layout()
     
-    # Save plot
-    plot_path = os.path.join(run_dir, "segmentation_results_comparison.png")
-    plt.savefig(plot_path, dpi=300, bbox_inches='tight')
+    # Save comprehensive plot
+    comprehensive_plot_path = os.path.join(run_dir, "comprehensive_evaluation_results.png")
+    plt.savefig(comprehensive_plot_path, dpi=300, bbox_inches='tight')
     plt.close()
     
-    log_and_print(f"Results visualization saved to: {plot_path}")
+    log_and_print(f"Comprehensive visualization saved to: {comprehensive_plot_path}")
+    
+    # Create separate plots for easier reading
+    for metric, title in zip(metrics, metric_titles):
+        plt.figure(figsize=(12, 8))
+        
+        means = [statistics[method][metric]['mean'] for method in methods]
+        stds = [statistics[method][metric]['std'] for method in methods]
+        
+        bars = plt.bar(method_names, means, yerr=stds, capsize=5, alpha=0.8, 
+                      color=[colors[i % len(colors)] for i in range(len(methods))])
+        
+        plt.title(f'{title} Across Reconstruction Methods', fontsize=16, fontweight='bold')
+        plt.ylabel(title, fontsize=14)
+        plt.xlabel('Reconstruction Method', fontsize=14)
+        plt.xticks(rotation=45, ha='right')
+        plt.grid(axis='y', alpha=0.3)
+        
+        # Add value labels on bars
+        for bar, mean, std in zip(bars, means, stds):
+            if not np.isnan(mean):
+                height = bar.get_height()
+                plt.text(bar.get_x() + bar.get_width()/2., height + std + 0.01,
+                        f'{mean:.3f}±{std:.3f}', ha='center', va='bottom', fontsize=10, fontweight='bold')
+        
+        if means and not all(np.isnan(means)):
+            y_max = max([m + s for m, s in zip(means, stds) if not np.isnan(m)])
+            plt.ylim(0, y_max * 1.1)
+        
+        plt.tight_layout()
+        
+        # Save individual plot
+        metric_plot_path = os.path.join(run_dir, f"{metric}_comparison.png")
+        plt.savefig(metric_plot_path, dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    log_and_print(f"Individual metric visualizations saved to: {run_dir}")
 
 """#### Main Execution"""
 
 if __name__ == "__main__":
     try:
-        # Run segmentation inference
-        results = evaluate_segmentation_on_reconstructed_images()
+        # Run comprehensive evaluation
+        results = evaluate_comprehensive_metrics()
         
         # Analyze and save results
         statistics = analyze_and_save_results(results)
         
-        # Create visualization
+        # Create visualizations
         create_results_visualization(statistics)
         
         # Log completion
-        log_and_print(f"\nSegmentation inference completed successfully at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        log_and_print(f"\nComprehensive evaluation completed successfully at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         log_and_print(f"All outputs saved to: {run_dir}")
         
     except Exception as e:
-        log_and_print(f"Error during segmentation inference: {str(e)}")
+        log_and_print(f"Error during comprehensive evaluation: {str(e)}")
         import traceback
         log_and_print(f"Traceback: {traceback.format_exc()}")
         
     finally:
         # Close log file
         log_file.close()
+
+
