@@ -329,8 +329,14 @@ def calculate_dice(pred, target, num_classes=3, eps=1e-6):
     pred_sum = pred_oh.sum(dim=[2, 3])
     target_sum = target_oh.sum(dim=[2, 3])
     dice_per_case = (2 * intersection + eps) / (pred_sum + target_sum + eps)
-    mean_dice_per_case = dice_per_case.mean(dim=1)
-    
+
+    # EXCLUDE BACKGROUND (channel 0) WHEN AVERAGING MULTI-CLASS DICE
+    if num_classes > 1 and dice_per_case.shape[1] > 1:
+        foreground = dice_per_case[:, 1:]  # skip background
+        mean_dice_per_case = foreground.mean(dim=1)
+    else:
+        mean_dice_per_case = dice_per_case.mean(dim=1)
+
     return mean_dice_per_case[0].item()  # Return single value
 
 """#### Model Loading"""

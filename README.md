@@ -14,18 +14,11 @@ The project consists of four main components:
 
 ```
 .
-├── benchmarks/
-│   ├── benchmarks.py              # Performance evaluation scripts
-│   ├── parallel_benchmarks.py     # Parallel version for faster processing
-│   └── benchmark_results.txt      # Benchmark results
 ├── dataset/
-│   ├── create_numpy_dataset.py    # Dataset creation and preprocessing
-│   ├── parallel-numpy-dataset.py  # Parallel dataset creation
-│   └── visualize_samples.py       # Dataset visualization tools
+│   └── parallel-numpy-dataset.py  # Parallel dataset creation and preprocessing
 ├── inference/
-│   ├── bounding-box.py            # Interactive ROI analysis
-│   ├── segmentation_inference.py  # Comprehensive segmentation evaluation
-│   └── segmentation_task_adaptive.py  # Task-adaptive segmentation inference
+│   ├── comprehensive_visualization.py  # Advanced visualization and analysis tools
+│   └── segmentation_inference.py       # Comprehensive segmentation evaluation
 ├── models/
 │   ├── train_base_unet.py         # Base U-Net reconstruction model
 │   ├── train_seg_unet.py          # Segmentation U-Net model
@@ -54,7 +47,7 @@ The project consists of four main components:
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/task_adaptive_ct.git
+   git clone https://github.com/nsefercioglu/task_adaptive_ct.git
    cd task_adaptive_ct
    ```
 
@@ -68,14 +61,14 @@ The project consists of four main components:
 ## Requirements
 
 The project dependencies are listed in `requirements.txt`:
-- PyTorch and torchvision for deep learning
-- NumPy for numerical computations
-- scikit-image for image processing
-- nibabel for NIFTI file handling
-- matplotlib for visualization
-- bm3d for BM3D denoising algorithm
-- scipy for scientific computing
-- tqdm for progress bars
+- PyTorch (≥1.9.0) and torchvision (≥0.10.0) for deep learning
+- NumPy (≥1.21.0) for numerical computations
+- scikit-image (≥0.18.0) for image processing
+- nibabel (≥3.2.0) for NIFTI file handling
+- matplotlib (≥3.4.0) for visualization
+- bm3d (≥4.0.0) for BM3D denoising algorithm
+- scipy (≥1.7.0) for scientific computing
+- tqdm (≥4.61.0) for progress bars
 
 ## Configuration
 
@@ -91,14 +84,8 @@ Before running any scripts, you need to configure the environment. All scripts u
 ### 1. Dataset Preparation
 
 ```bash
-# Create the dataset from raw NIFTI files
-python dataset/create_numpy_dataset.py
-
-# For faster processing with parallel execution
+# Create and preprocess the dataset with parallel execution
 python dataset/parallel-numpy-dataset.py
-
-# Visualize samples from the dataset
-python dataset/visualize_samples.py
 ```
 
 ### 2. Model Training
@@ -117,27 +104,14 @@ python models/train_task_adapted.py
 python models/joint_training_model.py
 ```
 
-### 3. Benchmarks
+### 3. Inference and Visualization
 
 ```bash
-# Run performance benchmarks
-python benchmarks/benchmarks.py
+# Run comprehensive visualization and analysis
+python inference/comprehensive_visualization.py
 
-# For faster parallel processing
-python benchmarks/parallel_benchmarks.py
-```
-
-### 4. Inference
-
-```bash
-# Interactive bounding box analysis
-python inference/bounding-box.py
-
-# Comprehensive segmentation evaluation
+# Perform segmentation evaluation
 python inference/segmentation_inference.py
-
-# Task-adaptive segmentation inference
-python inference/segmentation_task_adaptive.py
 ```
 
 ## Model Architecture

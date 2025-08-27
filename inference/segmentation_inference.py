@@ -261,7 +261,18 @@ def calculate_dice(pred, target, num_classes=3, threshold=0.5, eps=1e-6, mask=No
     pred_sum = pred.sum(dim=[2, 3])
     target_sum = target.sum(dim=[2, 3])
     dice_per_case = (2 * intersection + eps) / (pred_sum + target_sum + eps)
-    mean_dice_per_case = dice_per_case.mean(dim=1)
+
+    # EXCLUDE BACKGROUND (channel 0) WHEN AVERAGING MULTI-CLASS DICE
+    # If num_classes > 1, channel 0 is assumed to be background.
+    # We therefore average only over foreground classes to avoid inflating
+    # Dice scores when the prediction is all-background.
+    if num_classes > 1 and dice_per_case.shape[1] > 1:
+        foreground = dice_per_case[:, 1:]  # drop background channel
+        mean_dice_per_case = foreground.mean(dim=1)
+    else:
+        # Binary case (num_classes == 1) or unexpected shape – fall back to all channels
+        mean_dice_per_case = dice_per_case.mean(dim=1)
+
     return mean_dice_per_case
 
 def calculate_masked_dice(pred, target, mask, num_classes=3, threshold=0.5, eps=1e-6):
