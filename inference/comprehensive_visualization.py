@@ -289,27 +289,48 @@ def apply_bm3d_denoising_parallel(low_dose_batch, sigma_psd=CONFIG['sigma_psd'])
 
 """#### Metric Calculations"""
 
-def calculate_psnr(pred, target):
-    """Calculate PSNR between prediction and target"""
-    pred_np = pred.detach().cpu().numpy()
-    target_np = target.detach().cpu().numpy()
-    
-    pred_img = pred_np[0, 0]  # Single image
-    target_img = target_np[0, 0]
-    data_range = target_img.max() - target_img.min()
-    
-    return peak_signal_noise_ratio(target_img, pred_img, data_range=data_range)
+def create_circular_mask(h, w, center=None, radius=None):
+    """Create circular mask for masked metrics"""
+    if center is None:
+        center = (w // 2, h // 2)
+    if radius is None:
+        radius = min(w, h) / 2
+    Y, X = np.ogrid[:h, :w]
+    dist_from_center = np.sqrt((X - center[0])**2 + (Y - center[1])**2)
+    mask = dist_from_center <= radius
+    return mask.astype(np.float32)
 
-def calculate_ssim(pred, target):
-    """Calculate SSIM between prediction and target"""
+def calculate_masked_psnr(pred, target, mask):
+    """Calculate PSNR within masked region"""
     pred_np = pred.detach().cpu().numpy()
     target_np = target.detach().cpu().numpy()
     
     pred_img = pred_np[0, 0]  # Single image
     target_img = target_np[0, 0]
-    data_range = target_img.max() - target_img.min()
     
-    return structural_similarity(target_img, pred_img, data_range=data_range)
+    # Apply mask
+    masked_pred = pred_img * mask
+    masked_target = target_img * mask
+    
+    data_range = masked_target.max() - masked_target.min()
+    
+    return peak_signal_noise_ratio(masked_target, masked_pred, data_range=data_range)
+
+def calculate_masked_ssim(pred, target, mask):
+    """Calculate SSIM within masked region"""
+    pred_np = pred.detach().cpu().numpy()
+    target_np = target.detach().cpu().numpy()
+    
+    pred_img = pred_np[0, 0]  # Single image
+    target_img = target_np[0, 0]
+    
+    # Apply mask
+    masked_pred = pred_img * mask
+    masked_target = target_img * mask
+    
+    data_range = masked_target.max() - masked_target.min()
+    
+    return structural_similarity(masked_target, masked_pred, data_range=data_range)
 
 def calculate_dice(pred, target, num_classes=3, eps=1e-6):
     """Calculate Dice coefficient for segmentation"""
@@ -332,8 +353,20 @@ def calculate_dice(pred, target, num_classes=3, eps=1e-6):
 
     # EXCLUDE BACKGROUND (channel 0) WHEN AVERAGING MULTI-CLASS DICE
     if num_classes > 1 and dice_per_case.shape[1] > 1:
-        foreground = dice_per_case[:, 1:]  # skip background
-        mean_dice_per_case = foreground.mean(dim=1)
+        # Skip background channel
+        dice_fg = dice_per_case[:, 1:]
+        pred_sum_fg = pred_sum[:, 1:]
+        target_sum_fg = target_sum[:, 1:]
+        # Identify foreground classes that are present in either pred or target
+        valid = (pred_sum_fg + target_sum_fg) > 0  # [B, C-1] boolean
+        # Avoid division by zero: if no foreground pixels exist in both pred and target, Dice should be 0
+        if valid.any():
+            # Average only over valid foreground classes for each case
+            # Multiply by valid mask to zero-out invalid classes, then divide by count of valid classes per case
+            valid_counts = valid.sum(dim=1).clamp(min=1)  # [B]
+            mean_dice_per_case = (dice_fg * valid.float()).sum(dim=1) / valid_counts
+        else:
+            mean_dice_per_case = torch.zeros(dice_per_case.shape[0], device=pred.device)
     else:
         mean_dice_per_case = dice_per_case.mean(dim=1)
 
@@ -375,6 +408,10 @@ for alpha, path in CONFIG['task_adaptive_models'].items():
     task_adaptive_models[alpha] = model
 
 log_and_print(f"All models loaded successfully")
+
+# Create circular mask for masked metrics
+mask = create_circular_mask(h=512, w=512, center=(256, 256), radius=256)
+log_and_print(f"Circular mask created for masked metrics (radius: 256 pixels)")
 
 """#### Dataset Setup"""
 
@@ -714,8 +751,8 @@ def process_batch(batch_indices, test_dataset, device):
                     seg_map_single = seg_map_batch[i:i+1]
                     
                     # Calculate metrics
-                    psnr = calculate_psnr(recon_tensor, full_dose_single)
-                    ssim = calculate_ssim(recon_tensor, full_dose_single)
+                    psnr = calculate_masked_psnr(recon_tensor, full_dose_single, mask)
+                    ssim = calculate_masked_ssim(recon_tensor, full_dose_single, mask)
                     
                     # Calculate segmentation
                     seg_pred = seg_model(recon_tensor)

@@ -6,7 +6,7 @@ import numpy as np
 import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import os
-import pandas as pd
+
 from torch.utils.data import Dataset, DataLoader, random_split
 from skimage.transform import radon, iradon
 from skimage.metrics import peak_signal_noise_ratio, structural_similarity
@@ -263,21 +263,23 @@ def calculate_dice(pred, target, num_classes=3, threshold=0.5, eps=1e-6, mask=No
     dice_per_case = (2 * intersection + eps) / (pred_sum + target_sum + eps)
 
     # EXCLUDE BACKGROUND (channel 0) WHEN AVERAGING MULTI-CLASS DICE
-    # If num_classes > 1, channel 0 is assumed to be background.
-    # We therefore average only over foreground classes to avoid inflating
-    # Dice scores when the prediction is all-background.
     if num_classes > 1 and dice_per_case.shape[1] > 1:
-        foreground = dice_per_case[:, 1:]  # drop background channel
-        mean_dice_per_case = foreground.mean(dim=1)
+        foreground_dice = dice_per_case[:, 1:]
+        pred_sum_fg = pred_sum[:, 1:]
+        target_sum_fg = target_sum[:, 1:]
+
+        valid = (pred_sum_fg + target_sum_fg) > 0  # [B, C-1] boolean mask
+        if valid.any():
+            valid_counts = valid.sum(dim=1).clamp(min=1)  # per-case valid class count
+            mean_dice_per_case = (foreground_dice * valid.float()).sum(dim=1) / valid_counts
+        else:
+            mean_dice_per_case = torch.zeros(dice_per_case.shape[0], device=pred.device)
     else:
-        # Binary case (num_classes == 1) or unexpected shape – fall back to all channels
         mean_dice_per_case = dice_per_case.mean(dim=1)
 
     return mean_dice_per_case
 
-def calculate_masked_dice(pred, target, mask, num_classes=3, threshold=0.5, eps=1e-6):
-    """Calculate Dice coefficient within masked region. Returns [B]."""
-    return calculate_dice(pred, target, num_classes, threshold, eps, mask)
+
 
 """#### U-Net Model"""
 
@@ -549,7 +551,7 @@ def evaluate_comprehensive_metrics():
     for method in methods:
         results[method] = {
             'psnr': [], 'ssim': [], 'dice': [],
-            'masked_psnr': [], 'masked_ssim': [], 'masked_dice': []
+            'masked_psnr': [], 'masked_ssim': []
         }
     
     # Process test dataset
@@ -594,7 +596,6 @@ def evaluate_comprehensive_metrics():
                 # Dice calculation (segmentation metric)
                 seg_pred = seg_model(recon_images)
                 dice_scores = calculate_dice(seg_pred, seg_map, num_classes=CONFIG['num_classes'])
-                masked_dice_scores = calculate_masked_dice(seg_pred, seg_map, mask, num_classes=CONFIG['num_classes'])
                 
                 # Store results
                 results[method]['psnr'].extend(psnr_scores)
@@ -602,12 +603,10 @@ def evaluate_comprehensive_metrics():
                 results[method]['dice'].extend(dice_scores.cpu().numpy())
                 results[method]['masked_psnr'].extend(masked_psnr_scores)
                 results[method]['masked_ssim'].extend(masked_ssim_scores)
-                results[method]['masked_dice'].extend(masked_dice_scores.cpu().numpy())
             
             # Calculate metrics for full-dose ground truth (segmentation only)
             seg_pred_full_dose = seg_model(full_dose)
             dice_scores_full_dose = calculate_dice(seg_pred_full_dose, seg_map, num_classes=CONFIG['num_classes'])
-            masked_dice_scores_full_dose = calculate_masked_dice(seg_pred_full_dose, seg_map, mask, num_classes=CONFIG['num_classes'])
             
             # Store results for full-dose (N/A for PSNR and SSIM)
             results['full_dose_gt']['psnr'].extend([np.nan] * full_dose.shape[0])  # N/A values
@@ -615,7 +614,6 @@ def evaluate_comprehensive_metrics():
             results['full_dose_gt']['dice'].extend(dice_scores_full_dose.cpu().numpy())
             results['full_dose_gt']['masked_psnr'].extend([np.nan] * full_dose.shape[0])  # N/A values
             results['full_dose_gt']['masked_ssim'].extend([np.nan] * full_dose.shape[0])  # N/A values
-            results['full_dose_gt']['masked_dice'].extend(masked_dice_scores_full_dose.cpu().numpy())
             
             # Update progress bar
             progress_bar.set_postfix({
@@ -628,7 +626,7 @@ def evaluate_comprehensive_metrics():
 """#### Results Analysis and Saving"""
 
 def analyze_and_save_results(results):
-    """Calculate statistics and save comprehensive results to CSV and JSON"""
+    """Calculate statistics and save comprehensive results to JSON"""
     
     log_and_print("\n" + "="*80)
     log_and_print("COMPREHENSIVE EVALUATION RESULTS")
@@ -636,18 +634,14 @@ def analyze_and_save_results(results):
     
     # Calculate statistics for all metrics
     statistics = {}
-    csv_data = []
     
-    metrics = ['psnr', 'ssim', 'dice', 'masked_psnr', 'masked_ssim', 'masked_dice']
+    metrics = ['psnr', 'ssim', 'dice', 'masked_psnr', 'masked_ssim']
     
     for method, method_results in results.items():
         statistics[method] = {}
         method_display = method.replace('_', ' ').title()
         
         log_and_print(f"\n{method_display}:")
-        
-        # Create row for CSV
-        csv_row = {'Method': method_display}
         
         for metric in metrics:
             values = np.array(method_results[metric])
@@ -663,10 +657,6 @@ def analyze_and_save_results(results):
                 # Display results
                 metric_display = metric.replace('_', ' ').upper()
                 log_and_print(f"  {metric_display}: N/A")
-                
-                # Add to CSV row
-                csv_row[f'{metric_display}_mean'] = 'N/A'
-                csv_row[f'{metric_display}_std'] = 'N/A'
             else:
                 # Normal processing for valid metrics
                 # Filter out NaN values for computation
@@ -687,19 +677,8 @@ def analyze_and_save_results(results):
                 # Display results
                 metric_display = metric.replace('_', ' ').upper()
                 log_and_print(f"  {metric_display}: {mean_val:.4f} ± {std_val:.4f}")
-                
-                # Add to CSV row
-                csv_row[f'{metric_display}_mean'] = round(mean_val, 4)
-                csv_row[f'{metric_display}_std'] = round(std_val, 4)
         
-        csv_data.append(csv_row)
         log_and_print(f"  Sample Count: {len(values)}")
-    
-    # Save to CSV
-    csv_path = os.path.join(run_dir, 'comprehensive_evaluation_results.csv')
-    df = pd.DataFrame(csv_data)
-    df.to_csv(csv_path, index=False)
-    log_and_print(f"\nCSV results saved to: {csv_path}")
     
     # Save detailed results to JSON
     results_summary = {
@@ -763,8 +742,8 @@ def create_results_visualization(statistics):
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
     fig.suptitle('Comprehensive Evaluation Results Across Reconstruction Methods', fontsize=16, fontweight='bold')
     
-    metrics = ['psnr', 'ssim', 'dice', 'masked_psnr', 'masked_ssim', 'masked_dice']
-    metric_titles = ['PSNR (dB)', 'SSIM', 'Dice Score', 'Masked PSNR (dB)', 'Masked SSIM', 'Masked Dice Score']
+    metrics = ['psnr', 'ssim', 'dice', 'masked_psnr', 'masked_ssim']
+    metric_titles = ['PSNR (dB)', 'SSIM', 'Dice Score', 'Masked PSNR (dB)', 'Masked SSIM']
     colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#FF9FF3']
     
     for idx, (metric, title) in enumerate(zip(metrics, metric_titles)):
@@ -822,6 +801,9 @@ def create_results_visualization(statistics):
             # No valid data to plot
             ax.text(0.5, 0.5, 'No valid data', ha='center', va='center', transform=ax.transAxes)
             ax.set_title(title, fontsize=12, fontweight='bold')
+    
+    # Hide the last unused subplot
+    axes[1, 2].axis('off')
     
     plt.tight_layout()
     

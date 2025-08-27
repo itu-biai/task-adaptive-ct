@@ -98,10 +98,10 @@ python models/train_base_unet.py
 python models/train_seg_unet.py
 
 # Train the task-adaptive reconstruction model
-python models/train_task_adapted.py
+python models/train_task_adapted.py --alpha 0.5
 
 # Train both models jointly
-python models/joint_training_model.py
+python models/joint_training_model.py --alpha 0.5
 ```
 
 ### 3. Inference and Visualization
