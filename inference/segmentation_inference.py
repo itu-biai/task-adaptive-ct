@@ -532,6 +532,8 @@ def evaluate_comprehensive_metrics():
         methods.append(f'joint_{alpha}')
     for alpha in CONFIG['task_adaptive_models'].keys():
         methods.append(f'task_adaptive_{alpha}')
+    # Add full-dose ground truth for segmentation evaluation
+    methods.append('full_dose_gt')
     
     for method in methods:
         results[method] = {
@@ -591,6 +593,19 @@ def evaluate_comprehensive_metrics():
                 results[method]['masked_ssim'].extend(masked_ssim_scores)
                 results[method]['masked_dice'].extend(masked_dice_scores.cpu().numpy())
             
+            # Calculate metrics for full-dose ground truth (segmentation only)
+            seg_pred_full_dose = seg_model(full_dose)
+            dice_scores_full_dose = calculate_dice(seg_pred_full_dose, seg_map, num_classes=CONFIG['num_classes'])
+            masked_dice_scores_full_dose = calculate_masked_dice(seg_pred_full_dose, seg_map, mask, num_classes=CONFIG['num_classes'])
+            
+            # Store results for full-dose (N/A for PSNR and SSIM)
+            results['full_dose_gt']['psnr'].extend([np.nan] * full_dose.shape[0])  # N/A values
+            results['full_dose_gt']['ssim'].extend([np.nan] * full_dose.shape[0])  # N/A values
+            results['full_dose_gt']['dice'].extend(dice_scores_full_dose.cpu().numpy())
+            results['full_dose_gt']['masked_psnr'].extend([np.nan] * full_dose.shape[0])  # N/A values
+            results['full_dose_gt']['masked_ssim'].extend([np.nan] * full_dose.shape[0])  # N/A values
+            results['full_dose_gt']['masked_dice'].extend(masked_dice_scores_full_dose.cpu().numpy())
+            
             # Update progress bar
             progress_bar.set_postfix({
                 'Batch': f"{batch_idx + 1}/{len(test_loader)}",
@@ -625,22 +640,46 @@ def analyze_and_save_results(results):
         
         for metric in metrics:
             values = np.array(method_results[metric])
-            mean_val = np.mean(values)
-            std_val = np.std(values)
             
-            statistics[method][metric] = {
-                'mean': float(mean_val),
-                'std': float(std_val),
-                'count': len(values)
-            }
-            
-            # Display results
-            metric_display = metric.replace('_', ' ').upper()
-            log_and_print(f"  {metric_display}: {mean_val:.4f} ± {std_val:.4f}")
-            
-            # Add to CSV row
-            csv_row[f'{metric_display}_mean'] = round(mean_val, 4)
-            csv_row[f'{metric_display}_std'] = round(std_val, 4)
+            # Handle N/A values for full-dose ground truth PSNR/SSIM
+            if method == 'full_dose_gt' and metric in ['psnr', 'ssim', 'masked_psnr', 'masked_ssim']:
+                # All values should be NaN for these metrics
+                statistics[method][metric] = {
+                    'mean': 'N/A',
+                    'std': 'N/A',
+                    'count': len(values)
+                }
+                # Display results
+                metric_display = metric.replace('_', ' ').upper()
+                log_and_print(f"  {metric_display}: N/A")
+                
+                # Add to CSV row
+                csv_row[f'{metric_display}_mean'] = 'N/A'
+                csv_row[f'{metric_display}_std'] = 'N/A'
+            else:
+                # Normal processing for valid metrics
+                # Filter out NaN values for computation
+                valid_values = values[~np.isnan(values)]
+                if len(valid_values) > 0:
+                    mean_val = np.mean(valid_values)
+                    std_val = np.std(valid_values)
+                else:
+                    mean_val = np.nan
+                    std_val = np.nan
+                
+                statistics[method][metric] = {
+                    'mean': float(mean_val),
+                    'std': float(std_val),
+                    'count': len(values)
+                }
+                
+                # Display results
+                metric_display = metric.replace('_', ' ').upper()
+                log_and_print(f"  {metric_display}: {mean_val:.4f} ± {std_val:.4f}")
+                
+                # Add to CSV row
+                csv_row[f'{metric_display}_mean'] = round(mean_val, 4)
+                csv_row[f'{metric_display}_std'] = round(std_val, 4)
         
         csv_data.append(csv_row)
         log_and_print(f"  Sample Count: {len(values)}")
@@ -691,7 +730,12 @@ def analyze_and_save_results(results):
             f.write(f"{method_name}:\n")
             for metric in metrics:
                 metric_display = metric.replace('_', ' ').upper()
-                f.write(f"  {metric_display}: {stats[metric]['mean']:.4f} ± {stats[metric]['std']:.4f}\n")
+                mean_val = stats[metric]['mean']
+                std_val = stats[metric]['std']
+                if mean_val == 'N/A':
+                    f.write(f"  {metric_display}: N/A\n")
+                else:
+                    f.write(f"  {metric_display}: {mean_val:.4f} ± {std_val:.4f}\n")
             f.write(f"  Sample Count: {stats[metrics[0]]['count']}\n\n")
     
     log_and_print(f"Summary results saved to: {summary_path}")
@@ -715,29 +759,58 @@ def create_results_visualization(statistics):
     for idx, (metric, title) in enumerate(zip(metrics, metric_titles)):
         ax = axes[idx // 3, idx % 3]
         
-        means = [statistics[method][metric]['mean'] for method in methods]
-        stds = [statistics[method][metric]['std'] for method in methods]
+        # Filter methods based on metric type
+        if metric in ['psnr', 'ssim', 'masked_psnr', 'masked_ssim']:
+            # Exclude full_dose_gt from PSNR/SSIM plots
+            filtered_methods = [m for m in methods if m != 'full_dose_gt']
+            filtered_method_names = [method.replace('_', ' ').title() for method in filtered_methods]
+        else:
+            # Include all methods for Dice plots
+            filtered_methods = methods
+            filtered_method_names = [method.replace('_', ' ').title() for method in filtered_methods]
         
-        bars = ax.bar(range(len(methods)), means, yerr=stds, capsize=3, alpha=0.8, 
-                     color=[colors[i % len(colors)] for i in range(len(methods))])
+        means = []
+        stds = []
+        for method in filtered_methods:
+            mean_val = statistics[method][metric]['mean']
+            std_val = statistics[method][metric]['std']
+            # Handle N/A values
+            if mean_val == 'N/A':
+                means.append(np.nan)
+                stds.append(np.nan)
+            else:
+                means.append(mean_val)
+                stds.append(std_val)
         
-        ax.set_title(title, fontsize=12, fontweight='bold')
-        ax.set_ylabel('Score', fontsize=10)
-        ax.set_xticks(range(len(methods)))
-        ax.set_xticklabels(method_names, rotation=45, ha='right', fontsize=8)
-        ax.grid(axis='y', alpha=0.3)
-        
-        # Add value labels on bars
-        for i, (bar, mean, std) in enumerate(zip(bars, means, stds)):
-            if not np.isnan(mean):  # Only add label if value is valid
+        # Filter out NaN values for plotting
+        valid_indices = [i for i, (m, s) in enumerate(zip(means, stds)) if not np.isnan(m)]
+        if valid_indices:
+            valid_means = [means[i] for i in valid_indices]
+            valid_stds = [stds[i] for i in valid_indices]
+            valid_names = [filtered_method_names[i] for i in valid_indices]
+            
+            bars = ax.bar(range(len(valid_means)), valid_means, yerr=valid_stds, capsize=3, alpha=0.8, 
+                         color=[colors[i % len(colors)] for i in range(len(valid_means))])
+            
+            ax.set_title(title, fontsize=12, fontweight='bold')
+            ax.set_ylabel('Score', fontsize=10)
+            ax.set_xticks(range(len(valid_means)))
+            ax.set_xticklabels(valid_names, rotation=45, ha='right', fontsize=8)
+            ax.grid(axis='y', alpha=0.3)
+            
+            # Add value labels on bars
+            for i, (bar, mean, std) in enumerate(zip(bars, valid_means, valid_stds)):
                 height = bar.get_height()
                 ax.text(bar.get_x() + bar.get_width()/2., height + std + 0.01,
                        f'{mean:.3f}', ha='center', va='bottom', fontsize=7, fontweight='bold')
-        
-        # Set reasonable y-limits
-        if means and not all(np.isnan(means)):
-            y_max = max([m + s for m, s in zip(means, stds) if not np.isnan(m)])
+            
+            # Set reasonable y-limits
+            y_max = max([m + s for m, s in zip(valid_means, valid_stds)])
             ax.set_ylim(0, y_max * 1.1)
+        else:
+            # No valid data to plot
+            ax.text(0.5, 0.5, 'No valid data', ha='center', va='center', transform=ax.transAxes)
+            ax.set_title(title, fontsize=12, fontweight='bold')
     
     plt.tight_layout()
     
@@ -752,34 +825,69 @@ def create_results_visualization(statistics):
     for metric, title in zip(metrics, metric_titles):
         plt.figure(figsize=(12, 8))
         
-        means = [statistics[method][metric]['mean'] for method in methods]
-        stds = [statistics[method][metric]['std'] for method in methods]
+        # Filter methods based on metric type
+        if metric in ['psnr', 'ssim', 'masked_psnr', 'masked_ssim']:
+            # Exclude full_dose_gt from PSNR/SSIM plots
+            filtered_methods = [m for m in methods if m != 'full_dose_gt']
+            filtered_method_names = [method.replace('_', ' ').title() for method in filtered_methods]
+        else:
+            # Include all methods for Dice plots
+            filtered_methods = methods
+            filtered_method_names = [method.replace('_', ' ').title() for method in filtered_methods]
         
-        bars = plt.bar(method_names, means, yerr=stds, capsize=5, alpha=0.8, 
-                      color=[colors[i % len(colors)] for i in range(len(methods))])
+        means = []
+        stds = []
+        for method in filtered_methods:
+            mean_val = statistics[method][metric]['mean']
+            std_val = statistics[method][metric]['std']
+            # Handle N/A values
+            if mean_val == 'N/A':
+                means.append(np.nan)
+                stds.append(np.nan)
+            else:
+                means.append(mean_val)
+                stds.append(std_val)
         
-        plt.title(f'{title} Across Reconstruction Methods', fontsize=16, fontweight='bold')
-        plt.ylabel(title, fontsize=14)
-        plt.xlabel('Reconstruction Method', fontsize=14)
-        plt.xticks(rotation=45, ha='right')
-        plt.grid(axis='y', alpha=0.3)
-        
-        # Add value labels on bars
-        for bar, mean, std in zip(bars, means, stds):
-            if not np.isnan(mean):
+        # Filter out NaN values for plotting
+        valid_indices = [i for i, (m, s) in enumerate(zip(means, stds)) if not np.isnan(m)]
+        if valid_indices:
+            valid_means = [means[i] for i in valid_indices]
+            valid_stds = [stds[i] for i in valid_indices]
+            valid_names = [filtered_method_names[i] for i in valid_indices]
+            
+            bars = plt.bar(valid_names, valid_means, yerr=valid_stds, capsize=5, alpha=0.8, 
+                          color=[colors[i % len(colors)] for i in range(len(valid_means))])
+            
+            plt.title(f'{title} Across Reconstruction Methods', fontsize=16, fontweight='bold')
+            plt.ylabel(title, fontsize=14)
+            plt.xlabel('Reconstruction Method', fontsize=14)
+            plt.xticks(rotation=45, ha='right')
+            plt.grid(axis='y', alpha=0.3)
+            
+            # Add value labels on bars
+            for bar, mean, std in zip(bars, valid_means, valid_stds):
                 height = bar.get_height()
                 plt.text(bar.get_x() + bar.get_width()/2., height + std + 0.01,
                         f'{mean:.3f}±{std:.3f}', ha='center', va='bottom', fontsize=10, fontweight='bold')
-        
-        if means and not all(np.isnan(means)):
-            y_max = max([m + s for m, s in zip(means, stds) if not np.isnan(m)])
+            
+            y_max = max([m + s for m, s in zip(valid_means, valid_stds)])
             plt.ylim(0, y_max * 1.1)
+            
+            plt.tight_layout()
+            
+            # Save individual plot
+            metric_plot_path = os.path.join(run_dir, f"{metric}_comparison.png")
+            plt.savefig(metric_plot_path, dpi=300, bbox_inches='tight')
+        else:
+            # Create empty plot with message
+            plt.text(0.5, 0.5, 'No valid data to plot', ha='center', va='center', transform=plt.gca().transAxes)
+            plt.title(f'{title} Across Reconstruction Methods', fontsize=16, fontweight='bold')
+            plt.tight_layout()
+            
+            # Save individual plot
+            metric_plot_path = os.path.join(run_dir, f"{metric}_comparison.png")
+            plt.savefig(metric_plot_path, dpi=300, bbox_inches='tight')
         
-        plt.tight_layout()
-        
-        # Save individual plot
-        metric_plot_path = os.path.join(run_dir, f"{metric}_comparison.png")
-        plt.savefig(metric_plot_path, dpi=300, bbox_inches='tight')
         plt.close()
     
     log_and_print(f"Individual metric visualizations saved to: {run_dir}")

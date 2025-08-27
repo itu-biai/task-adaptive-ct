@@ -421,11 +421,17 @@ def _create_reconstruction_grid_plot_worker(args):
         'ground_truth'
     ]
     
-    # Create 3x4 grid (11 images + 1 empty)
+    # Create 3x4 grid (11 images)
     fig, axes = plt.subplots(3, 4, figsize=(20, 15))
     fig.suptitle(f'Reconstruction Comparison - Sample {sample_idx}', fontsize=20, fontweight='bold')
     
+    # Hide the last subplot (12th position)
+    axes[2, 3].axis('off')
+    
     for idx, (method_name, method_key) in enumerate(zip(method_names, method_keys)):
+        if idx >= 11:  # Skip after 11 images
+            break
+            
         row = idx // 4
         col = idx % 4
         ax = axes[row, col]
@@ -444,14 +450,10 @@ def _create_reconstruction_grid_plot_worker(args):
                 title += f'\nPSNR: {psnr:.2f} dB, SSIM: {ssim:.3f}, Dice: {dice:.3f}'
             
             ax.set_title(title, fontsize=11, fontweight='bold')
-        else:
-            ax.axis('off')  # Hide unused subplot
         
         ax.axis('off')
     
-    # Hide the last empty subplot
-    if len(method_names) < 12:
-        axes[2, 3].axis('off')
+    # All 12 positions should be filled now
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -505,9 +507,7 @@ def create_reconstruction_grid_plot(sample_idx, reconstructions, metrics, save_p
         
         ax.axis('off')
     
-    # Hide the last empty subplot
-    if len(method_names) < 12:
-        axes[2, 3].axis('off')
+    # All 12 positions should be filled now
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -522,22 +522,22 @@ def _create_segmentation_overlay_plot_worker(args):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
     
-    # Same ordering as reconstruction plot
+    # Updated ordering to include full-dose segmentation before ground truth
     method_names = [
         'Low-Dose', 'FBP', 'BM3D', 'Base U-Net',
         'Joint α=0.1', 'Joint α=0.5', 'Joint α=0.9',
         'Task-Adaptive α=0.1', 'Task-Adaptive α=0.5', 'Task-Adaptive α=0.9',
-        'Ground Truth'
+        'Full-Dose Seg', 'Ground Truth'
     ]
 
     method_keys = [
         'low_dose', 'fbp', 'bm3d', 'base_unet',
         'joint_alpha01', 'joint_alpha05', 'joint_alpha09',
         'task_adaptive_alpha01', 'task_adaptive_alpha05', 'task_adaptive_alpha09',
-        'ground_truth'
+        'full_dose_seg', 'ground_truth'
     ]
 
-    # Create 3x4 grid (11 images + 1 empty)
+    # Create 3x4 grid (12 images)
     fig, axes = plt.subplots(3, 4, figsize=(20, 15))
     fig.suptitle(f'Segmentation Overlay Comparison - Sample {sample_idx}', fontsize=20, fontweight='bold')
 
@@ -553,19 +553,24 @@ def _create_segmentation_overlay_plot_worker(args):
             # Determine segmentation to overlay
             if method_key == 'ground_truth':
                 seg = gt_seg
+            elif method_key == 'full_dose_seg':
+                seg = segmentations['full_dose_seg']
             else:
                 seg = segmentations[method_key]
 
             # Overlay segmentation with transparency
             ax.imshow(seg, cmap='jet', alpha=0.4, vmin=0, vmax=2)
             
-            # Add metrics to title if available (same as reconstruction plot)
+            # Add metrics to title if available
             title = method_name
-            if method_key in metrics and method_key != 'ground_truth':
+            if method_key in metrics and method_key not in ['ground_truth', 'full_dose_seg']:
                 psnr = metrics[method_key]['psnr']
                 ssim = metrics[method_key]['ssim']
                 dice = metrics[method_key]['dice']
                 title += f'\nPSNR: {psnr:.2f} dB, SSIM: {ssim:.3f}, Dice: {dice:.3f}'
+            elif method_key == 'full_dose_seg' and method_key in metrics:
+                dice = metrics[method_key]['dice']
+                title += f'\nPSNR: N/A, SSIM: N/A, Dice: {dice:.3f}'
             
             ax.set_title(title, fontsize=11, fontweight='bold')
         else:
@@ -573,9 +578,7 @@ def _create_segmentation_overlay_plot_worker(args):
 
         ax.axis('off')
 
-    # Hide the last empty subplot
-    if len(method_names) < 12:
-        axes[2, 3].axis('off')
+    # All 12 positions should be filled now
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -586,22 +589,22 @@ def create_segmentation_overlay_plot(sample_idx, reconstructions, segmentations,
     args = (sample_idx, reconstructions, segmentations, gt_seg, metrics, save_path)
     _create_segmentation_overlay_plot_worker(args)
 
-    # Same ordering as reconstruction plot
+    # Updated ordering to include full-dose segmentation before ground truth
     method_names = [
         'Low-Dose', 'FBP', 'BM3D', 'Base U-Net',
         'Joint α=0.1', 'Joint α=0.5', 'Joint α=0.9',
         'Task-Adaptive α=0.1', 'Task-Adaptive α=0.5', 'Task-Adaptive α=0.9',
-        'Ground Truth'
+        'Full-Dose Seg', 'Ground Truth'
     ]
 
     method_keys = [
         'low_dose', 'fbp', 'bm3d', 'base_unet',
         'joint_alpha01', 'joint_alpha05', 'joint_alpha09',
         'task_adaptive_alpha01', 'task_adaptive_alpha05', 'task_adaptive_alpha09',
-        'ground_truth'
+        'full_dose_seg', 'ground_truth'
     ]
 
-    # Create 3x4 grid (11 images + 1 empty)
+    # Create 3x4 grid (12 images)
     fig, axes = plt.subplots(3, 4, figsize=(20, 15))
     fig.suptitle(f'Segmentation Overlay Comparison - Sample {sample_idx}', fontsize=20, fontweight='bold')
 
@@ -617,19 +620,24 @@ def create_segmentation_overlay_plot(sample_idx, reconstructions, segmentations,
             # Determine segmentation to overlay
             if method_key == 'ground_truth':
                 seg = gt_seg
+            elif method_key == 'full_dose_seg':
+                seg = segmentations['full_dose_seg']
             else:
                 seg = segmentations[method_key]
 
             # Overlay segmentation with transparency
             ax.imshow(seg, cmap='jet', alpha=0.4, vmin=0, vmax=2)
             
-            # Add metrics to title if available (same as reconstruction plot)
+            # Add metrics to title if available
             title = method_name
-            if method_key in metrics and method_key != 'ground_truth':
+            if method_key in metrics and method_key not in ['ground_truth', 'full_dose_seg']:
                 psnr = metrics[method_key]['psnr']
                 ssim = metrics[method_key]['ssim']
                 dice = metrics[method_key]['dice']
                 title += f'\nPSNR: {psnr:.2f} dB, SSIM: {ssim:.3f}, Dice: {dice:.3f}'
+            elif method_key == 'full_dose_seg' and method_key in metrics:
+                dice = metrics[method_key]['dice']
+                title += f'\nPSNR: N/A, SSIM: N/A, Dice: {dice:.3f}'
             
             ax.set_title(title, fontsize=11, fontweight='bold')
         else:
@@ -637,9 +645,7 @@ def create_segmentation_overlay_plot(sample_idx, reconstructions, segmentations,
 
         ax.axis('off')
 
-    # Hide the last empty subplot
-    if len(method_names) < 12:
-        axes[2, 3].axis('off')
+    # All 12 positions should be filled now
 
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -688,6 +694,9 @@ def process_batch(batch_indices, test_dataset, device):
             for method_key, recon_batch in reconstructions.items():
                 sample_reconstructions[method_key] = recon_batch[i, 0]
             
+            # Add full-dose ground truth image for the full-dose segmentation display
+            sample_reconstructions['full_dose_seg'] = full_dose_batch[i, 0].cpu().numpy()
+            
             # Calculate metrics and segmentations
             for method_key in ['low_dose', 'fbp', 'bm3d', 'base_unet'] + \
                              [f'joint_{alpha}' for alpha in joint_recon_models.keys()] + \
@@ -716,6 +725,25 @@ def process_batch(batch_indices, test_dataset, device):
                     # Store segmentation
                     seg_pred_labels = torch.argmax(seg_pred, dim=1).squeeze(0).cpu().numpy()
                     sample_segmentations[method_key] = seg_pred_labels
+            
+            # Calculate full-dose segmentation (pretrained segmentation model on full-dose ground truth)
+            full_dose_single = full_dose_batch[i:i+1]
+            seg_map_single = seg_map_batch[i:i+1]
+            
+            # Calculate segmentation for full-dose ground truth
+            seg_pred_full_dose = seg_model(full_dose_single)
+            dice_full_dose = calculate_dice(seg_pred_full_dose, seg_map_single, num_classes=CONFIG['num_classes'])
+            
+            # Store metrics for full-dose (N/A for PSNR and SSIM)
+            sample_metrics['full_dose_seg'] = {
+                'psnr': float('nan'),  # N/A
+                'ssim': float('nan'),  # N/A
+                'dice': dice_full_dose
+            }
+            
+            # Store segmentation
+            seg_pred_full_dose_labels = torch.argmax(seg_pred_full_dose, dim=1).squeeze(0).cpu().numpy()
+            sample_segmentations['full_dose_seg'] = seg_pred_full_dose_labels
             
             batch_reconstructions.append(sample_reconstructions)
             batch_metrics.append(sample_metrics)
