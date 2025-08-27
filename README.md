@@ -26,22 +26,26 @@ The project consists of four main components:
 │   └── joint_training_model.py    # Joint reconstruction and segmentation training
 ├── LICENSE                        # GPL v3.0 license
 ├── requirements.txt               # Python dependencies
+├── README.md                      # This file
 └── .gitignore                     # Git ignore file
 ```
 
 ## Key Features
 
-- **Low-dose Simulation**: Realistic simulation of low-dose CT using Poisson noise in the Radon domain
-- **Image Reconstruction**: U-Net based architecture for high-quality image reconstruction
-- **Segmentation**: Multi-class segmentation with 3 target classes
-- **Task-Adaptive Learning**: Reconstruction model optimized using both image quality and segmentation accuracy metrics
+- **Low-dose Simulation**: Realistic simulation of low-dose CT using dose reduction in the Radon domain
+- **Image Reconstruction**: U-Net based architecture for high-quality image reconstruction from low-dose data
+- **Multi-class Segmentation**: 3-class segmentation (background, liver, tumor) with dedicated U-Net
+- **Task-Adaptive Learning**: Reconstruction model optimized using both MSE and Dice loss for segmentation accuracy
+- **Joint Training**: Simultaneous optimization of reconstruction and segmentation with configurable loss weighting
+- **Advanced Optimization**: Adam optimizer with learning rate scheduling (StepLR, ReduceLROnPlateau, CosineAnnealingLR)
+- **Early Stopping**: Configurable early stopping with patience and minimum epochs
+- **Comprehensive Evaluation**: Multiple reconstruction methods compared (FBP, BM3D, U-Net variants)
 - **Evaluation Metrics**: PSNR and SSIM for reconstruction quality; Dice coefficient for segmentation accuracy
-- **Modular Design**: Separate training scripts for different approaches
-- **Comprehensive Evaluation**: Multiple reconstruction methods compared
-- **Parallel Processing**: Support for faster dataset creation and benchmarking
-- **Interactive Analysis**: Tools for ROI-based evaluation
-- **Automatic Logging**: Result visualization and tracking
-- **Reproducible Training**: Configurable random seeds
+- **Parallel Processing**: Multi-core support for dataset creation, training, and inference
+- **Advanced Visualization**: Comprehensive plotting and analysis tools with ROI-based evaluation
+- **Automatic Logging**: Timestamped model checkpoints, training logs, and result visualization
+- **Reproducible Training**: Configurable random seeds and deterministic training
+- **Modular Design**: Separate training scripts for different approaches with shared U-Net architectures
 
 ## Installation
 
@@ -74,19 +78,33 @@ The project dependencies are listed in `requirements.txt`:
 
 Before running any scripts, you need to configure the environment. All scripts use configuration sections at the top of each file. Key parameters to adjust:
 
-- **Dataset paths**: Update `low_dose_dir`, `full_dose_dir`, `seg_dir` to your data locations
-- **Training parameters**: Adjust `batch_size`, `learning_rate`, `num_epochs` as needed
-- **Model parameters**: Configure `num_classes`, loss weights, etc.
-- **Output paths**: Set directories for saving models, logs, and results
+- **Dataset paths**: Update dataset directory paths in CONFIG sections
+  - `noisy_dir`/`low_dose_dir`: Path to low-dose CT images
+  - `clean_dir`/`full_dose_dir`: Path to full-dose CT images  
+  - `image_dir`: Path to full-dose images for segmentation training
+  - `mask_dir`/`seg_dir`: Path to segmentation masks
+- **Training parameters**: Adjust `batch_size` (16-64), `learning_rate` (1e-3), `num_epochs` (200) as needed
+- **Model parameters**: Configure `num_classes` (3), loss weights, optimizer settings
+- **Output paths**: Set `output_dir` for saving models, logs, and results
+- **Hardware settings**: Adjust `num_workers` (64) and `batch_size` based on your system capabilities
 
 ## Usage
 
 ### 1. Dataset Preparation
 
+The dataset preparation script processes NIFTI volumes and creates low-dose simulations:
+
 ```bash
 # Create and preprocess the dataset with parallel execution
+# This script will:
+# - Load NIFTI volumes and segmentation masks
+# - Resize images to 512x512
+# - Simulate low-dose CT using dose reduction
+# - Save preprocessed data as numpy arrays for training
 python dataset/parallel-numpy-dataset.py
 ```
+
+Configure the input and output paths in the CONFIG section of the script before running.
 
 ### 2. Model Training
 
@@ -98,9 +116,11 @@ python models/train_base_unet.py
 python models/train_seg_unet.py
 
 # Train the task-adaptive reconstruction model
+# --alpha controls the weight for Dice loss (1-alpha for MSE loss)
 python models/train_task_adapted.py --alpha 0.5
 
 # Train both models jointly
+# --alpha controls the weight for Dice loss (1-alpha for MSE loss)
 python models/joint_training_model.py --alpha 0.5
 ```
 
@@ -152,16 +172,14 @@ The following baseline methods are compared:
 - **FBP reconstruction** (Filtered Back Projection)
 - **BM3D denoising**
 - **Base U-Net reconstruction**
-- **Joint training reconstruction**
-- **Task-adaptive reconstruction**
+- **Task-adaptive reconstruction** (various alpha values)
+- **Joint training reconstruction** (various alpha values)
 
-Results are automatically saved to `benchmarks/benchmark_results.txt`.
+Results are automatically logged during inference and visualization with PSNR, SSIM, and Dice metrics.
 
 ## Pre-trained Weights
 
 Pre-trained model weights are not included in this repository. You can train the models using the provided scripts. Training logs and model checkpoints will be saved with timestamps for version control.
-
-
 
 ## License
 
