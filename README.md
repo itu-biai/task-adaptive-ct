@@ -37,7 +37,7 @@ The project consists of four main components:
 - **Multi-class Segmentation**: 3-class segmentation (background, liver, tumor) with dedicated U-Net
 - **Task-Adaptive Learning**: Reconstruction model optimized using both MSE and Dice loss for segmentation accuracy
 - **Joint Training**: Simultaneous optimization of reconstruction and segmentation with configurable loss weighting
-- **Advanced Optimization**: Adam optimizer with learning rate scheduling
+- **Advanced Optimization**: Adam optimizer with learning rate scheduling (StepLR, ReduceLROnPlateau, CosineAnnealingLR)
 - **Early Stopping**: Configurable early stopping with patience and minimum epochs
 - **Comprehensive Evaluation**: Multiple reconstruction methods compared (FBP, BM3D, U-Net variants)
 - **Evaluation Metrics**: PSNR and SSIM for reconstruction quality; Dice coefficient for segmentation accuracy
