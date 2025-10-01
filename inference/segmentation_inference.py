@@ -37,26 +37,26 @@ CONFIG = {
     'n_processes': cpu_count(),  # Use all available CPU cores
     
     # Dataset directories
-    'low_dose_dir': '/YEREL/dataset/low_dose',
-    'full_dose_dir': '/YEREL/dataset/full_dose',
-    'seg_dir': '/YEREL/dataset/segmentation_slices',
+    'low_dose_dir': '.../dataset/low_dose',
+    'full_dose_dir': '.../dataset/full_dose',
+    'seg_dir': '.../dataset/segmentation_slices',
     
     # Model weights paths
-    'seg_model_path': '/ari/users/nsefercioglu/model-weights/seg_unet.pth',
-    'base_unet_model_path': '/ari/users/nsefercioglu/model-weights/base_unet_reconstruction.pth',
+    'seg_model_path': '.../model-weights/seg_unet.pth',
+    'base_unet_model_path': '.../model-weights/base_unet_reconstruction.pth',
     'joint_models': {
-        'alpha01': '/ari/users/nsefercioglu/model-weights/joint_recon_unet_alpha01.pth',
-        'alpha05': '/ari/users/nsefercioglu/model-weights/joint_recon_unet_alpha05.pth',
-        'alpha09': '/ari/users/nsefercioglu/model-weights/joint_recon_unet_alpha09.pth'
+        'alpha01': '.../model-weights/joint_recon_unet_alpha01.pth',
+        'alpha05': '.../model-weights/joint_recon_unet_alpha05.pth',
+        'alpha09': '.../model-weights/joint_recon_unet_alpha09.pth'
     },
     'task_adaptive_models': {
-        'alpha01': '/ari/users/nsefercioglu/model-weights/task_adaptive_unet_alpha01.pth',
-        'alpha05': '/ari/users/nsefercioglu/model-weights/task_adaptive_unet_alpha05.pth',
-        'alpha09': '/ari/users/nsefercioglu/model-weights/task_adaptive_unet_alpha09.pth'
+        'alpha01': '.../model-weights/task_adaptive_unet_alpha01.pth',
+        'alpha05': '.../model-weights/task_adaptive_unet_alpha05.pth',
+        'alpha09': '.../model-weights/task_adaptive_unet_alpha09.pth'
     },
     
     # Output directory for plots and logs
-    'output_dir': '/ari/users/nsefercioglu/inference-results'
+    'output_dir': '.../inference-results'
 }
 
 """#### Output Directory and Logging Setup"""
