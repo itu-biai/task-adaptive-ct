@@ -56,12 +56,12 @@ CONFIG = {
     'min_epochs': 20,  # Minimum epochs before early stopping can trigger
     
     # Dataset directories
-    'low_dose_dir': '/YEREL/dataset/low_dose',
-    'full_dose_dir': '/YEREL/dataset/full_dose',
-    'seg_dir': '/YEREL/dataset/segmentation_slices',
+    'low_dose_dir': '.../dataset/low_dose',
+    'full_dose_dir': '.../dataset/full_dose',
+    'seg_dir': '.../dataset/segmentation_slices',
     
     # Output directory for plots and logs (will be updated with alpha value)
-    'output_dir': f'/ari/users/nsefercioglu/logs/joint-training-alpha{str(args.alpha).replace(".", "")}',
+    'output_dir': f'.../logs/joint-training-alpha{str(args.alpha).replace(".", "")}',
     
     # Loss parameters
     'criterion_mse': nn.MSELoss(),
@@ -669,7 +669,7 @@ save_training_plots()
 
 # Save model weights with alpha-specific names
 recon_model_name = f'joint_recon_unet_alpha{str(CONFIG["alpha"]).replace(".", "")}.pth'
-recon_model_path = f'/ari/users/nsefercioglu/model-weights/{recon_model_name}'
+recon_model_path = f'.../model-weights/{recon_model_name}'
 
 # Create model weights directory if it doesn't exist
 os.makedirs(os.path.dirname(recon_model_path), exist_ok=True)
