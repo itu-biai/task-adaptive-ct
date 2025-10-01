@@ -18,9 +18,9 @@ CONFIG = {
     'theta': None,  # Projection angles, None for auto
     
     # Directory paths
-    'volume_folder': "/ari/users/nsefercioglu/nifti-data/Volumes",
-    'segmentation_folder': "/ari/users/nsefercioglu/nifti-data/Segmentations",
-    'output_dir': "/ari/users/nsefercioglu/preprocessed_data",
+    'volume_folder': ".../nifti-data/Volumes",
+    'segmentation_folder': ".../nifti-data/Segmentations",
+    'output_dir': ".../preprocessed_data",
     
     # Output subdirectories
     'low_dose_subdir': "low_dose",
