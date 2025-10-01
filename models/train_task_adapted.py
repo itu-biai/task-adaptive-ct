@@ -56,15 +56,15 @@ CONFIG = {
     'min_epochs': 20,  # Minimum epochs before early stopping can trigger
     
     # Dataset directories
-    'low_dose_dir': '/YEREL/dataset/low_dose',
-    'full_dose_dir': '/YEREL/dataset/full_dose',
-    'seg_dir': '/YEREL/dataset/segmentation_slices',
+    'low_dose_dir': '.../dataset/low_dose',
+    'full_dose_dir': '.../dataset/full_dose',
+    'seg_dir': '.../dataset/segmentation_slices',
     
     # Pretrained model paths
-    'seg_model_path': '/ari/users/nsefercioglu/model-weights/seg_unet.pth',
+    'seg_model_path': '.../model-weights/seg_unet.pth',
     
     # Output directory for plots and logs (will be updated with alpha value)
-    'output_dir': f'/ari/users/nsefercioglu/logs/task-adaptive-alpha{str(args.alpha).replace(".", "")}',
+    'output_dir': f'.../logs/task-adaptive-alpha{str(args.alpha).replace(".", "")}',
     
     # Loss parameters
     'criterion_mse': nn.MSELoss(),
@@ -662,7 +662,7 @@ task_adaptive_model = recon_model
 
 # Save model weights with alpha-specific name
 model_name = f'task_adaptive_unet_alpha{str(CONFIG["alpha"]).replace(".", "")}.pth'
-original_model_path = f'/ari/users/nsefercioglu/model-weights/{model_name}'
+original_model_path = f'.../model-weights/{model_name}'
 
 # Create model weights directory if it doesn't exist
 os.makedirs(os.path.dirname(original_model_path), exist_ok=True)
