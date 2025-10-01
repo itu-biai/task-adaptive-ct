@@ -43,11 +43,11 @@ CONFIG = {
     'min_epochs': 20,  # Enforce at least 20 epochs before early stopping
     
     # Dataset directories
-    'noisy_dir': '/YEREL/dataset/low_dose',
-    'clean_dir': '/YEREL/dataset/full_dose',
+    'noisy_dir': '.../dataset/low_dose',
+    'clean_dir': '.../dataset/full_dose',
     
     # Output directory for plots and logs
-    'output_dir': '/ari/users/nsefercioglu/logs/base-unet', 
+    'output_dir': '.../logs/base-unet', 
     
     # Loss parameters
     'criterion': nn.MSELoss()
@@ -645,7 +645,7 @@ unet = model
 
 # Save model weights with constant name
 model_name = 'base_unet_reconstruction.pth'
-original_model_path = f'/ari/users/nsefercioglu/model-weights/{model_name}'
+original_model_path = f'.../model-weights/{model_name}'
 
 torch.save(unet.state_dict(), original_model_path)
 
