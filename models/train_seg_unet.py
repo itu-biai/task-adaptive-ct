@@ -43,11 +43,11 @@ CONFIG = {
     'min_epochs': 20,  # Minimum epochs before early stopping can trigger
     
     # Dataset directories
-    'image_dir': '/YEREL/dataset/full_dose',
-    'mask_dir': '/YEREL/dataset/segmentation_slices',
+    'image_dir': '.../dataset/full_dose',
+    'mask_dir': '.../dataset/segmentation_slices',
     
     # Output directory for plots and logs
-    'output_dir': '/ari/users/nsefercioglu/logs/segmentation-unet', 
+    'output_dir': '.../logs/segmentation-unet', 
     
     # Loss parameters
     'criterion': nn.CrossEntropyLoss()
@@ -486,7 +486,7 @@ trained_Unet = model
 
 # Save model weights with constant name
 model_name = 'seg_unet.pth'
-original_model_path = f'/ari/users/nsefercioglu/model-weights/{model_name}'
+original_model_path = f'.../model-weights/{model_name}'
 
 torch.save(trained_Unet.state_dict(), original_model_path)
 
