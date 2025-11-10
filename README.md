@@ -42,7 +42,7 @@ The project consists of four main components:
 - **Comprehensive Evaluation**: Multiple reconstruction methods compared (FBP, BM3D, U-Net variants)
 - **Evaluation Metrics**: PSNR and SSIM for reconstruction quality; Dice coefficient for segmentation accuracy
 - **Parallel Processing**: Multi-core support for dataset creation, training, and inference
-- **Advanced Visualization**: Comprehensive plotting and analysis tools with ROI-based evaluation
+- **Advanced Visualization**: Comprehensive plotting and analysis with ROI-based evaluation
 - **Automatic Logging**: Timestamped model checkpoints, training logs, and result visualization
 - **Reproducible Training**: Configurable random seeds and deterministic training
 - **Modular Design**: Separate training scripts for different approaches with shared U-Net architectures
