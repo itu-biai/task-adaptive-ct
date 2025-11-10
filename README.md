@@ -17,7 +17,7 @@ The project consists of four main components:
 ├── dataset/
 │   └── parallel-numpy-dataset.py  # Parallel dataset creation and preprocessing
 ├── inference/
-│   ├── comprehensive_visualization.py  # Advanced visualization and analysis tools
+│   ├── comprehensive_visualization.py  # Advanced visualization and analysis
 │   └── segmentation_inference.py       # Comprehensive segmentation evaluation
 ├── models/
 │   ├── train_base_unet.py         # Base U-Net reconstruction model
