@@ -194,11 +194,11 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 If you use this code in your research, please consider citing:
 
 ```bibtex
-@misc{task_adaptive_ct,
-  title={To be filled},
-  author={To be filled},
-  year={To be filled},
-  url={To be filled}
+@article{sefercioglu2025task,
+  title={Task-Adaptive Low-Dose CT Reconstruction},
+  author={Sefercioglu, Necati and Unal, Mehmet Ozan and Ertas, Metin and Yildirim, Isa},
+  journal={arXiv preprint arXiv:2511.07094},
+  year={2025}
 }
 ```
 
